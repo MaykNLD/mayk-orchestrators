@@ -1,0 +1,29 @@
+# Entorno — las keys reales van a GitHub Secrets, NUNCA aquí
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Archivos privados de cliente (se archivan fuera del repo al cerrar proyecto)
+**/proyectos/*/privado/
+**/proyectos/*/cliente-privado/
+**/cliente/activos/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Temporales
+tmp/
+temp/
