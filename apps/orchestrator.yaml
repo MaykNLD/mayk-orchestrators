@@ -1,0 +1,80 @@
+id: orchestrator-apps
+name: "mayk.dev — Orquestador Proyectos App"
+version: "1.0.0"
+description: "Gestiona proyectos de desarrollo de aplicaciones móviles, PWAs y SaaS complejos. Soporta React Native/Expo, Flutter, Swift/iOS nativo, Kotlin/Android nativo y PWA. Con la misma metodología de fases y gobernanza que el orquestador PWEB, adaptada al ciclo de vida de apps."
+
+prompt_maestro: prompt-maestro.md
+agents_registry: agents-registry.yaml
+agents_global_registry: ../../mayk-agents/agents-registry.yaml
+
+recommended_models_summary:
+  agente-auditor: "Gemini 1.5 Pro — análisis de código móvil existente"
+  agente-estratega: "Claude Opus/Sonnet — decisión de stack y plataforma"
+  agente-visual: "GPT-4o — interpreta referencias visuales y patrones nativos"
+  agente-dev: "Claude Sonnet — código móvil de calidad (RN, Flutter, Swift, Kotlin)"
+  agente-qa-ops: "Gemini 1.5 Flash — checklists de tienda y métricas de rendimiento"
+
+agents_used:
+  - id: agente-auditor
+    version: "4.0.0"
+    mandatory: false
+    phase: 1
+    activation: "Solo si hay app, web o código previo del cliente"
+
+  - id: agente-estratega
+    version: "4.0.0"
+    mandatory: true
+    phase: 1
+    activation: "Siempre — define tipo de app, plataforma y stack"
+
+  - id: agente-visual
+    version: "4.0.0"
+    mandatory: true
+    phase: 2
+    activation: "Tras aprobación del Estratega — diseño mobile-first con patrones nativos"
+
+  - id: agente-dev
+    version: "4.0.0"
+    mandatory: true
+    phase: 2
+    activation: "Tras aprobación del Visual y del cliente"
+
+  - id: agente-qa-ops
+    version: "4.0.0"
+    mandatory: true
+    phase: 3
+    activation: "Tras aprobación del Dev — QA móvil + distribución en tiendas"
+
+compatible_models:
+  - claude
+  - claude-code
+  - antigravity
+  - cursor
+  - gpt
+  - gemini
+
+app_types:
+  - pwa-simple           # App rápida/pyme conectada a web o CRM
+  - react-native-expo    # Cross-platform JS (iOS + Android)
+  - flutter              # Cross-platform premium (iOS + Android)
+  - swift-ios            # Nativo iOS (Swift/SwiftUI)
+  - kotlin-android       # Nativo Android (Kotlin/Jetpack Compose)
+  - saas-dashboard       # SaaS o dashboard como app web/móvil
+
+deployment_targets:
+  ios: ["testflight", "app-store-connect"]
+  android: ["play-console-internal", "play-console-production"]
+  web: ["vercel", "netlify"]
+  backend: ["railway", "render"]
+  database: ["supabase", "firebase", "postgresql-cloud", "mongodb-atlas"]
+
+app_tiers:
+  free_trial:
+    description: "MVP o app de prueba gratuita — sin tiendas, PWA o TestFlight interno"
+    stack_recommendation: "PWA con Next.js/Vite o Expo con distribución interna"
+  pyme_paid:
+    description: "App de pago para pymes — publicada en tiendas"
+    stack_recommendation: "React Native + Expo (más rápido) o Flutter (más premium)"
+  enterprise:
+    description: "App empresarial — máxima performance, integración profunda"
+    stack_recommendation: "Flutter o Swift/Kotlin nativo según plataforma"
