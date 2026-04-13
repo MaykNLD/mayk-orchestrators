@@ -1,0 +1,69 @@
+id: orchestrator-pweb
+name: "mayk.dev — Orquestador Proyectos Web"
+version: "4.0.0"
+description: "Gestiona proyectos de desarrollo web profesional (landing, e-commerce, SaaS, portales, blogs, sistemas CRM) con metodología de fases, aprobaciones obligatorias y gobernanza por semáforos."
+
+prompt_maestro: prompt-maestro.md
+agents_registry: agents-registry.yaml
+agents_global_registry: ../../mayk-agents/agents-registry.yaml
+
+recommended_models_summary:
+  # Resumen para que el orquestador lo comunique al usuario al activar cada agente
+  agente-auditor: "Gemini 1.5 Pro — contexto largo + búsqueda web"
+  agente-estratega: "Claude Opus/Sonnet — razonamiento de negocio"
+  agente-visual: "GPT-4o — multimodal, interpreta assets visuales"
+  agente-dev: "Claude Sonnet — mayor calidad de código"
+  agente-qa-ops: "Gemini 1.5 Flash — velocidad para checklists"
+
+agents_used:
+  - id: agente-auditor
+    version: "4.0.0"
+    mandatory: false
+    phase: 1
+    activation: "Solo si el cliente tiene web o código previo"
+
+  - id: agente-estratega
+    version: "4.0.0"
+    mandatory: true
+    phase: 1
+    activation: "Siempre — primer agente en proyectos desde cero"
+
+  - id: agente-visual
+    version: "4.0.0"
+    mandatory: true
+    phase: 2
+    activation: "Tras aprobación del Estratega"
+
+  - id: agente-dev
+    version: "4.0.0"
+    mandatory: true
+    phase: 2
+    activation: "Tras aprobación del Visual"
+
+  - id: agente-qa-ops
+    version: "4.0.0"
+    mandatory: true
+    phase: 3
+    activation: "Tras aprobación del Dev"
+
+compatible_models:
+  - claude
+  - claude-code
+  - antigravity
+  - cursor
+  - gpt
+  - gemini
+
+project_types:
+  - landing-page
+  - e-commerce
+  - web-corporativa
+  - saas-dashboard
+  - blog-contenido
+  - portfolio
+  - sistema-crm-apis
+
+deployment_targets:
+  frontend: ["vercel", "netlify"]
+  backend: ["railway", "render"]
+  database: ["mongodb-atlas", "supabase", "firebase", "postgresql-cloud"]
