@@ -1,0 +1,35 @@
+version: "1.0.0"
+orchestrator: apps
+description: "Agentes utilizados por el orquestador APPS y sus versiones fijadas."
+agents_global_source: "../../mayk-agents/agents-registry.yaml"
+
+agents:
+  - id: agente-auditor
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-auditor/agent.yaml"
+    mandatory: false
+    notes: "Activa el MODO APP MÓVIL del agente para auditar código nativo existente"
+
+  - id: agente-estratega
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-estratega/agent.yaml"
+    mandatory: true
+    notes: "Usa la sección de decisión de stacks móviles y guía de plataforma"
+
+  - id: agente-visual
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-visual/agent.yaml"
+    mandatory: true
+    notes: "Activa el MODO APP MÓVIL: patrones nativos, bottom nav, splash, dark mode"
+
+  - id: agente-dev
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-dev/agent.yaml"
+    mandatory: true
+    notes: "Usa el stack móvil definido en Fase 1: RN/Expo, Flutter, Swift o Kotlin"
+
+  - id: agente-qa-ops
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-qa-ops/agent.yaml"
+    mandatory: true
+    notes: "Activa el MODO APP MÓVIL: métricas móviles, Detox, TestFlight, Play Console"
