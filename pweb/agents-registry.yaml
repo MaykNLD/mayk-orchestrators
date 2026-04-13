@@ -1,0 +1,30 @@
+version: "4.0.0"
+orchestrator: pweb
+description: "Agentes utilizados por el orquestador PWEB y sus versiones fijadas."
+agents_global_source: "../../mayk-agents/agents-registry.yaml"
+
+agents:
+  - id: agente-auditor
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-auditor/agent.yaml"
+    mandatory: false
+
+  - id: agente-estratega
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-estratega/agent.yaml"
+    mandatory: true
+
+  - id: agente-visual
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-visual/agent.yaml"
+    mandatory: true
+
+  - id: agente-dev
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-dev/agent.yaml"
+    mandatory: true
+
+  - id: agente-qa-ops
+    version: "4.0.0"
+    path: "../../mayk-agents/agente-qa-ops/agent.yaml"
+    mandatory: true
