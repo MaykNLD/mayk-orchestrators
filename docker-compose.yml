@@ -1,0 +1,109 @@
+# docker-compose.yml — mayk.dev Ecosystem
+# Levanta el orquestador + 5 agentes en red privada interna.
+# Las keys se inyectan desde GitHub Secrets en CI o desde .env local (nunca hardcodeadas).
+# Consumo estimado RAM idle: ~400-600 MB en total.
+
+version: "3.9"
+
+# ── Red privada interna (no expuesta al exterior) ─────────────────────────────
+networks:
+  mayk-net:
+    driver: bridge
+
+# ── Variables de entorno comunes (inyectadas desde GitHub Secrets / .env) ─────
+x-common-env: &common-env
+  OPENROUTER_API_KEY:  ${OPENROUTER_API_KEY}
+  SUPABASE_URL:        ${SUPABASE_URL}
+  SUPABASE_ANON_KEY:   ${SUPABASE_ANON_KEY}
+  MAKE_WEBHOOK_URL:    ${MAKE_WEBHOOK_URL}
+
+services:
+
+  # ── 0. Orquestador Maestro ─────────────────────────────────────────────────
+  orquestador:
+    build:
+      context: ./pweb
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+    networks:
+      - mayk-net
+    depends_on:
+      - agente-auditor
+      - agente-estratega
+      - agente-visual
+      - agente-dev
+      - agente-qa-ops
+    restart: unless-stopped
+    mem_limit: 256m
+
+  # ── 1. Agente Auditor ─────────────────────────────────────────────────────
+  agente-auditor:
+    build:
+      context: ../mayk-agents
+      dockerfile: agente-auditor/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      <<: *common-env
+    networks:
+      - mayk-net
+    restart: unless-stopped
+    mem_limit: 256m
+
+  # ── 2. Agente Estratega ───────────────────────────────────────────────────
+  agente-estratega:
+    build:
+      context: ../mayk-agents
+      dockerfile: agente-estratega/Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      <<: *common-env
+    networks:
+      - mayk-net
+    restart: unless-stopped
+    mem_limit: 256m
+
+  # ── 3. Agente Visual ─────────────────────────────────────────────────────
+  agente-visual:
+    build:
+      context: ../mayk-agents
+      dockerfile: agente-visual/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      <<: *common-env
+    networks:
+      - mayk-net
+    restart: unless-stopped
+    mem_limit: 256m
+
+  # ── 4. Agente Dev ─────────────────────────────────────────────────────────
+  agente-dev:
+    build:
+      context: ../mayk-agents
+      dockerfile: agente-dev/Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      <<: *common-env
+    networks:
+      - mayk-net
+    restart: unless-stopped
+    mem_limit: 512m  # Dev necesita más por respuestas de código extenso
+
+  # ── 5. Agente QA-Ops ─────────────────────────────────────────────────────
+  agente-qa-ops:
+    build:
+      context: ../mayk-agents
+      dockerfile: agente-qa-ops/Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      <<: *common-env
+    networks:
+      - mayk-net
+    restart: unless-stopped
+    mem_limit: 256m
