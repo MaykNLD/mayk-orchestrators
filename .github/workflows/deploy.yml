@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub Actions — Deploy via Tailscale
+# Conecta de forma segura al servidor Ubuntu (100.65.147.1) y despliega
+# el stack Docker sin exponer ningún puerto a internet público.
+# Disparador: push a main en mayk-orchestrators
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy via Tailscale
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Permite lanzarlo manualmente desde GitHub UI
+
+jobs:
+  deploy:
+    name: Deploy mayk.dev Stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # 1. Checkout del código
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Conectar al túnel Tailscale (ephemeral — se desconecta al terminar el job)
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          tags: tag:ci
+
+      # 3. Verificar conectividad con el servidor Ubuntu
+      - name: Ping Ubuntu server
+        run: ping -c 3 100.65.147.1
+
+      # 4. Copiar archivos al servidor via SCP (solo los necesarios)
+      - name: Copy files to server
+        run: |
+          scp -o StrictHostKeyChecking=no -r \
+            docker-compose.yml \
+            Makefile \
+            pweb/ \
+            ubuntu@100.65.147.1:/home/ubuntu/mayk-dev/
+
+      # 5. Ejecutar docker-compose en el servidor Ubuntu via SSH
+      #    Las variables se inyectan como env vars desde GitHub Secrets
+      - name: Deploy Docker stack
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@100.65.147.1 << 'EOF'
+            cd /home/ubuntu/mayk-dev
+
+            # Inyectar secrets como variables de entorno (solo en memoria del proceso)
+            export OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}"
+            export SUPABASE_URL="${{ secrets.SUPABASE_URL }}"
+            export SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}"
+            export SUPABASE_SECRET_KEY="${{ secrets.SUPABASE_SECRET_KEY }}"
+            export MAKE_WEBHOOK_URL="${{ secrets.MAKE_WEBHOOK_URL }}"
+
+            # Rebuild y reinicio del stack
+            docker compose pull --quiet || true
+            docker compose up -d --build --remove-orphans
+
+            # Verificar que todos los servicios levantaron
+            docker compose ps
+          EOF
+
+      # 6. Verificar salud del orquestador (espera 10s para que arranquen los contenedores)
+      - name: Health check via Tailscale
+        run: |
+          sleep 10
+          curl -f http://100.65.147.1:8000/health || exit 1
+          echo "Orquestador operativo."
+
+      # 7. Verificar todos los agentes
+      - name: Agents health check
+        run: |
+          curl -s http://100.65.147.1:8000/agents/health
