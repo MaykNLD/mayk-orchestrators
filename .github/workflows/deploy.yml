@@ -56,12 +56,28 @@ jobs:
         run: |
           pip install requests --quiet
           python3 pweb/supabase/run_migrations.py
+        env:
+          MIGRATIONS_DIR: pweb/supabase/migrations
 
-      # 6. Ejecutar docker-compose en el servidor via SSH
+      # 6. Clonar/actualizar mayk-agents en el servidor (requerido por docker-compose)
+      - name: Sync mayk-agents repo
+        run: |
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} bash << 'ENDSSH'
+            if [ -d /home/mayk/mayk-agents/.git ]; then
+              echo "Actualizando mayk-agents..."
+              git -C /home/mayk/mayk-agents pull --ff-only
+            else
+              echo "Clonando mayk-agents..."
+              git clone https://github.com/MaykNLD/mayk-agents.git /home/mayk/mayk-agents
+            fi
+          ENDSSH
+
+      # 7. Ejecutar docker-compose en el servidor via SSH
       #    Las variables se inyectan como env vars desde GitHub Secrets
       - name: Deploy Docker stack
         run: |
-          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} bash << 'ENDSSH'
+            set -e
             cd /home/mayk/mayk-dev
 
             # Inyectar secrets como variables de entorno (solo en memoria del proceso)
@@ -72,12 +88,11 @@ jobs:
             export MAKE_WEBHOOK_URL="${{ secrets.MAKE_WEBHOOK_URL }}"
 
             # Rebuild y reinicio del stack
-            docker compose pull --quiet || true
             docker compose up -d --build --remove-orphans
 
             # Verificar que todos los servicios levantaron
             docker compose ps
-          EOF
+          ENDSSH
 
       # 6. Verificar salud del orquestador (espera 10s para que arranquen los contenedores)
       - name: Health check via Tailscale
