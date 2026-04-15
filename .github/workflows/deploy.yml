@@ -43,7 +43,16 @@ jobs:
             pweb/ \
             mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-dev/
 
-      # 5. Ejecutar docker-compose en el servidor Ubuntu via SSH
+      # 5. Aplicar migraciones SQL en Supabase (idempotente — IF NOT EXISTS)
+      - name: Run Supabase Migrations
+        env:
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          pip install requests --quiet
+          python3 pweb/supabase/run_migrations.py
+
+      # 6. Ejecutar docker-compose en el servidor via SSH
       #    Las variables se inyectan como env vars desde GitHub Secrets
       - name: Deploy Docker stack
         run: |
