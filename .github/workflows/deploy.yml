@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # GitHub Actions — Deploy via Tailscale
-# Conecta de forma segura al servidor Ubuntu (100.65.147.1) y despliega
+# Conecta de forma segura al servidor mayk (${{ secrets.HOST_IP }}) y despliega
 # el stack Docker sin exponer ningún puerto a internet público.
 # Disparador: push a main en mayk-orchestrators
 # ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ jobs:
 
       # 3. Verificar conectividad con el servidor Ubuntu
       - name: Ping Ubuntu server
-        run: ping -c 3 100.65.147.1
+        run: ping -c 3 ${{ secrets.HOST_IP }}
 
       # 4. Copiar archivos al servidor via SCP (solo los necesarios)
       - name: Copy files to server
@@ -41,14 +41,14 @@ jobs:
             docker-compose.yml \
             Makefile \
             pweb/ \
-            ubuntu@100.65.147.1:/home/ubuntu/mayk-dev/
+            mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-dev/
 
       # 5. Ejecutar docker-compose en el servidor Ubuntu via SSH
       #    Las variables se inyectan como env vars desde GitHub Secrets
       - name: Deploy Docker stack
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@100.65.147.1 << 'EOF'
-            cd /home/ubuntu/mayk-dev
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} << 'EOF'
+            cd /home/mayk/mayk-dev
 
             # Inyectar secrets como variables de entorno (solo en memoria del proceso)
             export OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}"
@@ -69,10 +69,10 @@ jobs:
       - name: Health check via Tailscale
         run: |
           sleep 10
-          curl -f http://100.65.147.1:8000/health || exit 1
+          curl -f http://${{ secrets.HOST_IP }}:8000/health || exit 1
           echo "Orquestador operativo."
 
       # 7. Verificar todos los agentes
       - name: Agents health check
         run: |
-          curl -s http://100.65.147.1:8000/agents/health
+          curl -s http://${{ secrets.HOST_IP }}:8000/agents/health
