@@ -73,7 +73,7 @@ jobs:
           # Eliminar .git para que scp no intente copiar los objetos de solo lectura
           rm -rf mayk-agents-repo/.git
           ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "rm -rf /home/mayk/mayk-agents && mkdir -p /home/mayk/mayk-agents"
-          scp -o StrictHostKeyChecking=no -r mayk-agents-repo/* mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-agents/
+          scp -o StrictHostKeyChecking=no -r mayk-agents-repo/. mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-agents/
 
       # 7. Ejecutar docker-compose en el servidor via SSH
       #    Las variables se inyectan como env vars desde GitHub Secrets
