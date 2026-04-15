@@ -60,18 +60,17 @@ jobs:
           python3 pweb/supabase/run_migrations.py || true
 
 
-      # 6. Clonar/actualizar mayk-agents en el servidor (requerido por docker-compose)
-      - name: Sync mayk-agents repo
+      # 6. Clonar mayk-agents en el runner y copiarlo al servidor via SCP
+      - name: Checkout mayk-agents
+        uses: actions/checkout@v4
+        with:
+          repository: MaykNLD/mayk-agents
+          path: mayk-agents-repo
+
+      - name: Copy mayk-agents to server
         run: |
-          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} bash << 'ENDSSH'
-            if [ -d /home/mayk/mayk-agents/.git ]; then
-              echo "Actualizando mayk-agents..."
-              git -C /home/mayk/mayk-agents pull --ff-only
-            else
-              echo "Clonando mayk-agents..."
-              git clone https://github.com/MaykNLD/mayk-agents.git /home/mayk/mayk-agents
-            fi
-          ENDSSH
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "mkdir -p /home/mayk/mayk-agents"
+          scp -o StrictHostKeyChecking=no -r mayk-agents-repo/. mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-agents/
 
       # 7. Ejecutar docker-compose en el servidor via SSH
       #    Las variables se inyectan como env vars desde GitHub Secrets
