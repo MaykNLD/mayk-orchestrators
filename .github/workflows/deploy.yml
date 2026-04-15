@@ -1,122 +1,122 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# GitHub Actions — Deploy via Tailscale
-# Conecta de forma segura al servidor mayk (${{ secrets.HOST_IP }}) y despliega
-# el stack Docker sin exponer ningún puerto a internet público.
-# Disparador: push a main en mayk-orchestrators
-# ─────────────────────────────────────────────────────────────────────────────
-
 name: Deploy via Tailscale
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Permite lanzarlo manualmente desde GitHub UI
+  workflow_dispatch:
 
 jobs:
   deploy:
     name: Deploy mayk.dev Stack
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
-      # 1. Checkout del código
-      - name: Checkout code
+      # 1. Checkout del código del orquestador
+      - name: Checkout orchestrator code
         uses: actions/checkout@v4
 
-      # 2. Conectar al túnel Tailscale (ephemeral — se desconecta al terminar el job)
+      # 2. Conectar al túnel Tailscale
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
           tags: tag:ci
 
-
-      # 3. Configurar SSH con la clave privada
+      # 3. Configurar SSH
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          printf '%s' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.HOST_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      # 4. Copiar archivos al servidor via SCP (solo los necesarios)
-      - name: Copy files to server
+      # 4. Verificar conectividad SSH antes de continuar
+      - name: Verify SSH connection
         run: |
-          scp -o StrictHostKeyChecking=no -r \
-            docker-compose.yml \
-            Makefile \
-            pweb/ \
-            mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-dev/
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa mayk@${{ secrets.HOST_IP }} "echo 'SSH OK && hostname'"
 
-      # 5. Aplicar migraciones SQL en Supabase (idempotente — IF NOT EXISTS)
-      - name: Run Supabase Migrations
-        continue-on-error: true   # Las tablas ya existen; no bloquear el deploy si falla
+      # 5. Copiar el orquestador al servidor
+      - name: Copy orchestrator to server
+        run: |
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "mkdir -p /home/mayk/mayk-dev"
+          scp -o StrictHostKeyChecking=no docker-compose.yml mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-dev/
+          scp -o StrictHostKeyChecking=no -r pweb mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-dev/
+
+      # 6. Clonar mayk-agents y desplegar TODO en un único script SSH
+      #    (evita race conditions entre comandos SSH separados)
+      - name: Deploy everything on server
         env:
-          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          MIGRATIONS_DIR:      pweb/supabase/migrations
+          MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
         run: |
-          pip install requests --quiet
-          python3 pweb/supabase/run_migrations.py || true
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} \
+            GH_PAT="$GH_PAT" \
+            OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+            SUPABASE_URL="$SUPABASE_URL" \
+            SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+            SUPABASE_SECRET_KEY="$SUPABASE_SECRET_KEY" \
+            MAKE_WEBHOOK_URL="$MAKE_WEBHOOK_URL" \
+            bash -s << 'DEPLOY_SCRIPT'
+          set -euo pipefail
+          echo "=== Inicio del deploy en el servidor ==="
 
+          # --- Clonar/actualizar mayk-agents usando git+token ---
+          AGENTS_DIR="/home/mayk/mayk-agents"
+          AGENTS_REPO="https://x-access-token:${GH_PAT}@github.com/MaykNLD/mayk-agents.git"
 
-      # 6. Clonar mayk-agents (repo privado) en el runner y copiarlo al servidor via SCP
-      - name: Checkout mayk-agents
-        uses: actions/checkout@v4
-        with:
-          repository: MaykNLD/mayk-agents
-          token: ${{ secrets.GH_PAT }}
-          path: mayk-agents-repo
+          if [ -d "$AGENTS_DIR/.git" ]; then
+            echo ">>> Actualizando mayk-agents..."
+            cd "$AGENTS_DIR"
+            git remote set-url origin "$AGENTS_REPO"
+            git fetch origin
+            git reset --hard origin/main
+          else
+            echo ">>> Clonando mayk-agents desde cero..."
+            rm -rf "$AGENTS_DIR"
+            git clone "$AGENTS_REPO" "$AGENTS_DIR"
+          fi
 
-      - name: Copy mayk-agents to server
+          # --- Preparar shared en cada agente (necesario para Docker build context) ---
+          echo ">>> Preparando carpeta shared en cada agente..."
+          cd "$AGENTS_DIR"
+          for d in agente-*/; do
+            # Copiar shared si no existe o está desactualizado
+            rm -rf "${d}shared"
+            cp -r shared "${d}shared"
+            # Arreglar referencia ../shared en Dockerfiles
+            if grep -q '\.\./shared' "${d}Dockerfile" 2>/dev/null; then
+              sed -i 's|\.\./shared|shared|g' "${d}Dockerfile"
+              echo "  Parcheado Dockerfile de $d"
+            fi
+          done
+
+          # --- Desplegar con docker compose ---
+          echo ">>> Iniciando docker compose..."
+          cd /home/mayk/mayk-dev
+
+          # Exportar variables de entorno para docker compose
+          export OPENROUTER_API_KEY
+          export SUPABASE_URL
+          export SUPABASE_ANON_KEY
+          export SUPABASE_SECRET_KEY
+          export MAKE_WEBHOOK_URL
+
+          # Parar contenedores anteriores y reconstruir
+          docker compose down --remove-orphans 2>/dev/null || true
+          docker compose up -d --build
+
+          echo "=== Deploy completado ==="
+          docker compose ps
+          DEPLOY_SCRIPT
+
+      # 7. Health check
+      - name: Health check
         run: |
-          # Eliminar .git para reducir tamaño
-          rm -rf mayk-agents-repo/.git
-          # Transferencia robusta mediante archivo tar comprimido y scp simple (a prueba de fallos de subida recursiva SFTP)
-          tar -czf agents.tar.gz -C mayk-agents-repo .
-          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "rm -rf /home/mayk/mayk-agents && mkdir -p /home/mayk/mayk-agents"
-          scp -o StrictHostKeyChecking=no agents.tar.gz mayk@${{ secrets.HOST_IP }}:/tmp/
-          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "tar -xzf /tmp/agents.tar.gz -C /home/mayk/mayk-agents && rm /tmp/agents.tar.gz"
-
-      # 7. Ejecutar docker-compose en el servidor via SSH
-      #    Las variables se inyectan como env vars desde GitHub Secrets
-      - name: Deploy Docker stack
-        run: |
-          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} bash << 'ENDSSH'
-            set -e
-
-            # Hotfix para que los Dockerfiles de los agentes toleren compilarse con scope de su propia carpeta
-            cd /home/mayk/mayk-agents
-            for d in agente-*/; do
-              cp -r shared $d/shared || true
-              sed -i 's|\.\./shared|shared|g' $d/Dockerfile
-            done
-
-            cd /home/mayk/mayk-dev
-
-            # Inyectar secrets como variables de entorno (solo en memoria del proceso)
-            export OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}"
-            export SUPABASE_URL="${{ secrets.SUPABASE_URL }}"
-            export SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}"
-            export SUPABASE_SECRET_KEY="${{ secrets.SUPABASE_SECRET_KEY }}"
-            export MAKE_WEBHOOK_URL="${{ secrets.MAKE_WEBHOOK_URL }}"
-
-            # Rebuild y reinicio del stack
-            docker compose up -d --build --remove-orphans
-
-            # Verificar que todos los servicios levantaron
-            docker compose ps
-          ENDSSH
-
-
-      # 6. Verificar salud del orquestador (espera 10s para que arranquen los contenedores)
-      - name: Health check via Tailscale
-        run: |
-          sleep 10
-          curl -f http://${{ secrets.HOST_IP }}:8000/health || exit 1
-          echo "Orquestador operativo."
-
-      # 7. Verificar todos los agentes
-      - name: Agents health check
-        run: |
-          curl -s http://${{ secrets.HOST_IP }}:8000/agents/health
+          echo "Esperando 15s para que arranquen los contenedores..."
+          sleep 15
+          curl -f --retry 3 --retry-delay 5 http://${{ secrets.HOST_IP }}:8000/health && echo "ORQUESTADOR OK"
