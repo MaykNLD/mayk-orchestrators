@@ -60,11 +60,12 @@ jobs:
           python3 pweb/supabase/run_migrations.py || true
 
 
-      # 6. Clonar mayk-agents en el runner y copiarlo al servidor via SCP
+      # 6. Clonar mayk-agents (repo privado) en el runner y copiarlo al servidor via SCP
       - name: Checkout mayk-agents
         uses: actions/checkout@v4
         with:
           repository: MaykNLD/mayk-agents
+          token: ${{ secrets.GH_PAT }}
           path: mayk-agents-repo
 
       - name: Copy mayk-agents to server
