@@ -70,11 +70,13 @@ jobs:
 
       - name: Copy mayk-agents to server
         run: |
-          # Eliminar .git para que scp no intente copiar los objetos de solo lectura
+          # Eliminar .git para reducir tamaño
           rm -rf mayk-agents-repo/.git
-          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "rm -rf /home/mayk/mayk-agents && rm -rf /home/mayk/mayk-agents-repo"
-          scp -o StrictHostKeyChecking=no -r mayk-agents-repo mayk@${{ secrets.HOST_IP }}:/home/mayk/
-          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "mv /home/mayk/mayk-agents-repo /home/mayk/mayk-agents"
+          # Transferencia robusta mediante archivo tar comprimido y scp simple (a prueba de fallos de subida recursiva SFTP)
+          tar -czf agents.tar.gz -C mayk-agents-repo .
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "rm -rf /home/mayk/mayk-agents && mkdir -p /home/mayk/mayk-agents"
+          scp -o StrictHostKeyChecking=no agents.tar.gz mayk@${{ secrets.HOST_IP }}:/tmp/
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "tar -xzf /tmp/agents.tar.gz -C /home/mayk/mayk-agents && rm /tmp/agents.tar.gz"
 
       # 7. Ejecutar docker-compose en el servidor via SSH
       #    Las variables se inyectan como env vars desde GitHub Secrets
