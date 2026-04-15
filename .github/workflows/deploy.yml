@@ -108,8 +108,11 @@ jobs:
           export SUPABASE_SECRET_KEY
           export MAKE_WEBHOOK_URL
 
-          # Parar contenedores anteriores y reconstruir
-          docker compose down --remove-orphans 2>/dev/null || true
+          # Parar y eliminar completamente todos los contenedores del proyecto
+          cd /home/mayk/mayk-dev
+          docker compose down --remove-orphans --volumes 2>/dev/null || true
+          # Eliminar contenedores huérfanos con el prefijo del proyecto por si acaso
+          docker ps -a --filter "name=mayk-dev" -q | xargs -r docker rm -f 2>/dev/null || true
           docker compose up -d --build
 
           echo "=== Deploy completado ==="
