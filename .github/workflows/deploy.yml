@@ -53,11 +53,10 @@ jobs:
         env:
           SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          MIGRATIONS_DIR:      pweb/supabase/migrations
         run: |
           pip install requests --quiet
           python3 pweb/supabase/run_migrations.py
-        env:
-          MIGRATIONS_DIR: pweb/supabase/migrations
 
       # 6. Clonar/actualizar mayk-agents en el servidor (requerido por docker-compose)
       - name: Sync mayk-agents repo
