@@ -41,8 +41,7 @@ services:
   # ── 1. Agente Auditor ─────────────────────────────────────────────────────
   agente-auditor:
     build:
-      context: ../mayk-agents
-      dockerfile: agente-auditor/Dockerfile
+      context: ../mayk-agents/agente-auditor
     ports:
       - "8001:8001"
     environment:
@@ -55,8 +54,7 @@ services:
   # ── 2. Agente Estratega ───────────────────────────────────────────────────
   agente-estratega:
     build:
-      context: ../mayk-agents
-      dockerfile: agente-estratega/Dockerfile
+      context: ../mayk-agents/agente-estratega
     ports:
       - "8002:8002"
     environment:
@@ -69,8 +67,7 @@ services:
   # ── 3. Agente Visual ─────────────────────────────────────────────────────
   agente-visual:
     build:
-      context: ../mayk-agents
-      dockerfile: agente-visual/Dockerfile
+      context: ../mayk-agents/agente-visual
     ports:
       - "8003:8003"
     environment:
@@ -83,8 +80,7 @@ services:
   # ── 4. Agente Dev ─────────────────────────────────────────────────────────
   agente-dev:
     build:
-      context: ../mayk-agents
-      dockerfile: agente-dev/Dockerfile
+      context: ../mayk-agents/agente-dev
     ports:
       - "8004:8004"
     environment:
@@ -97,8 +93,7 @@ services:
   # ── 5. Agente QA-Ops ─────────────────────────────────────────────────────
   agente-qa-ops:
     build:
-      context: ../mayk-agents
-      dockerfile: agente-qa-ops/Dockerfile
+      context: ../mayk-agents/agente-qa-ops
     ports:
       - "8005:8005"
     environment:
