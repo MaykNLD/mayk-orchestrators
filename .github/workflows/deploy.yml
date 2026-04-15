@@ -30,9 +30,7 @@ jobs:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
           tags: tag:ci
 
-      # 3. Verificar conectividad con el servidor Ubuntu
-      - name: Ping Ubuntu server
-        run: ping -c 3 ${{ secrets.HOST_IP }}
+
 
       # 4. Copiar archivos al servidor via SCP (solo los necesarios)
       - name: Copy files to server
