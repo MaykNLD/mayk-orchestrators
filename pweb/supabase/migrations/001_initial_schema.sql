@@ -7,7 +7,11 @@
 -- ─── Extensiones ─────────────────────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS "pg_trgm"; -- índices de búsqueda de texto
 
--- ─── Limpieza Previa (Idempotencia) ──────────────────────────────────────────
+-- ─── Limpieza Previa (Idempotencia Fuerte) ───────────────────────────────────
+DROP VIEW IF EXISTS resumen_proyectos CASCADE;
+DROP TABLE IF EXISTS make_webhooks_log CASCADE;
+DROP TABLE IF EXISTS ejecuciones CASCADE;
+DROP TABLE IF EXISTS proyectos CASCADE;
 DROP TYPE IF EXISTS tipo_proyecto_enum CASCADE;
 DROP TYPE IF EXISTS estado_ejecucion_enum CASCADE;
 
