@@ -27,7 +27,10 @@ if ENV_FILE.exists():
 SUPABASE_URL       = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY", "")
 
-MIGRATIONS_DIR = pathlib.Path(__file__).parent / "supabase" / "migrations"
+MIGRATIONS_DIR = pathlib.Path(
+    os.environ.get("MIGRATIONS_DIR", "")
+) if os.environ.get("MIGRATIONS_DIR") else pathlib.Path(__file__).parent / "migrations"
+
 
 
 def check_config():
