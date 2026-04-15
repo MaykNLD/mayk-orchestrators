@@ -81,6 +81,14 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} bash << 'ENDSSH'
             set -e
+
+            # Hotfix para que los Dockerfiles de los agentes toleren compilarse con scope de su propia carpeta
+            cd /home/mayk/mayk-agents
+            for d in agente-*/; do
+              cp -r shared $d/shared || true
+              sed -i 's|\.\./shared|shared|g' $d/Dockerfile
+            done
+
             cd /home/mayk/mayk-dev
 
             # Inyectar secrets como variables de entorno (solo en memoria del proceso)
@@ -96,6 +104,7 @@ jobs:
             # Verificar que todos los servicios levantaron
             docker compose ps
           ENDSSH
+
 
       # 6. Verificar salud del orquestador (espera 10s para que arranquen los contenedores)
       - name: Health check via Tailscale
