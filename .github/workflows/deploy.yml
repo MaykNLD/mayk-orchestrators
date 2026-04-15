@@ -70,7 +70,7 @@ jobs:
 
       - name: Copy mayk-agents to server
         run: |
-          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "mkdir -p /home/mayk/mayk-agents"
+          ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "rm -rf /home/mayk/mayk-agents && mkdir -p /home/mayk/mayk-agents"
           scp -o StrictHostKeyChecking=no -r mayk-agents-repo/. mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-agents/
 
       # 7. Ejecutar docker-compose en el servidor via SSH
