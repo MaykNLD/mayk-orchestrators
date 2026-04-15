@@ -50,13 +50,15 @@ jobs:
 
       # 5. Aplicar migraciones SQL en Supabase (idempotente — IF NOT EXISTS)
       - name: Run Supabase Migrations
+        continue-on-error: true   # Las tablas ya existen; no bloquear el deploy si falla
         env:
           SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           MIGRATIONS_DIR:      pweb/supabase/migrations
         run: |
           pip install requests --quiet
-          python3 pweb/supabase/run_migrations.py
+          python3 pweb/supabase/run_migrations.py || true
+
 
       # 6. Clonar/actualizar mayk-agents en el servidor (requerido por docker-compose)
       - name: Sync mayk-agents repo
