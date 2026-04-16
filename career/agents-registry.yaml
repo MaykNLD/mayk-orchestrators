@@ -1,0 +1,18 @@
+version: "1.0.0"
+description: "Agentes disponibles para el orquestador career"
+agents:
+  - id: agente-hr-evaluador
+    repo: mayk-agents
+    path: agente-hr-evaluador/agent.yaml
+    port: 8011
+    endpoint: /execute
+    activacion: "Siempre que llega una oferta nueva (status=pendiente)"
+    modelo: google/gemini-2.5-pro
+
+  - id: agente-hr-sastre
+    repo: mayk-agents
+    path: agente-hr-sastre/agent.yaml
+    port: 8012
+    endpoint: /execute
+    activacion: "Solo si fit_score >= 3.0 despues del evaluador"
+    modelo: anthropic/claude-3-5-haiku
