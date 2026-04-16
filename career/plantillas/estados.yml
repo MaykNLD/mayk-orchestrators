@@ -1,0 +1,58 @@
+# Estados canonicos del pipeline de candidaturas
+# Fuente de verdad para Supabase, tracker y notificaciones
+
+states:
+  pendiente:
+    label: "Pendiente"
+    description: "Oferta recibida, pendiente de evaluacion"
+    next: [evaluando, descartado]
+
+  evaluando:
+    label: "Evaluando"
+    description: "agente-hr-evaluador en proceso"
+    next: [cv_generado, descartado]
+
+  cv_generado:
+    label: "CV Generado"
+    description: "CV adaptado y PDF listos"
+    next: [aplicado, descartado]
+
+  aplicado:
+    label: "Aplicado"
+    description: "Candidatura enviada (accion manual del usuario)"
+    next: [respondido, rechazado]
+
+  respondido:
+    label: "Respondido"
+    description: "La empresa respondio"
+    next: [entrevista, rechazado]
+
+  entrevista:
+    label: "Entrevista"
+    description: "En proceso de entrevistas"
+    next: [oferta, rechazado]
+
+  oferta:
+    label: "Oferta"
+    description: "Oferta recibida"
+    next: [aceptado, rechazado]
+
+  aceptado:
+    label: "Aceptado"
+    description: "Oferta aceptada"
+    next: []
+
+  rechazado:
+    label: "Rechazado"
+    description: "Rechazado por la empresa"
+    next: []
+
+  descartado:
+    label: "Descartado"
+    description: "Descartado por score bajo o decision del candidato"
+    next: []
+
+rules:
+  - NUNCA usar estados fuera de esta lista en Supabase
+  - NUNCA poner fechas ni texto extra en el campo status
+  - Estado "aplicado" solo lo puede fijar el usuario manualmente
