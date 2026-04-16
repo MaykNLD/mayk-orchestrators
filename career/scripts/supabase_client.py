@@ -1,80 +1,110 @@
 """
-supabase_client.py — Wrapper Supabase para el modulo career
-Usa la API REST de Supabase directamente (sin SDK externo).
+supabase_client.py — Wrapper REST para Supabase (sin SDK externo)
+Soporte multi-usuario: cada operacion puede recibir perfil_id
 """
 import os, json, urllib.request, urllib.error
-from typing import Optional, Dict, Any, List
+from typing import Optional
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
 def _headers():
     return {
-        "apikey": SUPABASE_KEY,
+        "apikey":        SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation",
+        "Content-Type":  "application/json",
+        "Prefer":        "return=representation",
     }
 
-def _get(table: str, filters: str = "") -> List[Dict]:
-    url = f"{SUPABASE_URL}/rest/v1/{table}?{filters}"
+def _get(table: str, query: str = "") -> list:
+    url = f"{SUPABASE_URL}/rest/v1/{table}{'?' + query if query else ''}"
     req = urllib.request.Request(url, headers=_headers())
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        return []
 
-def _post(table: str, data: Dict) -> Dict:
+def _post(table: str, data: dict) -> dict:
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     body = json.dumps(data).encode()
     req = urllib.request.Request(url, data=body, headers=_headers(), method="POST")
-    with urllib.request.urlopen(req, timeout=15) as r:
-        result = json.loads(r.read().decode())
-        return result[0] if isinstance(result, list) else result
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            result = json.loads(r.read().decode())
+            return result[0] if isinstance(result, list) and result else {}
+    except Exception as e:
+        return {}
 
-def _patch(table: str, filters: str, data: Dict) -> Dict:
-    url = f"{SUPABASE_URL}/rest/v1/{table}?{filters}"
+def _patch(table: str, eq_field: str, eq_value: str, data: dict) -> dict:
+    url = f"{SUPABASE_URL}/rest/v1/{table}?{eq_field}=eq.{eq_value}"
     body = json.dumps(data).encode()
     req = urllib.request.Request(url, data=body, headers=_headers(), method="PATCH")
-    with urllib.request.urlopen(req, timeout=15) as r:
-        result = json.loads(r.read().decode())
-        return result[0] if isinstance(result, list) else result
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            result = json.loads(r.read().decode())
+            return result[0] if isinstance(result, list) and result else {}
+    except Exception as e:
+        return {}
 
-# ── Funciones de alto nivel ──────────────────────────────────────
+# ─── PERFILES (multi-usuario) ────────────────────────────────────
 
-def get_pending_applications(limit: int = 10) -> List[Dict]:
-    """Devuelve aplicaciones con status=pendiente."""
-    return _get("aplicaciones_career", f"status=eq.pendiente&order=created_at.asc&limit={limit}")
+def list_perfiles() -> list:
+    """Lista todos los perfiles disponibles."""
+    return _get("perfil_base", "select=id,nombre,apellido,email,mercado,idioma&order=created_at.asc")
 
-def get_perfil_base(perfil_id: str) -> Optional[Dict]:
-    """Devuelve el perfil base de un candidato por ID."""
-    results = _get("perfil_base", f"id=eq.{perfil_id}")
-    return results[0] if results else None
+def get_perfil_by_id(perfil_id: str) -> Optional[dict]:
+    """Obtiene un perfil por su UUID."""
+    result = _get("perfil_base", f"id=eq.{perfil_id}&limit=1")
+    return result[0] if result else None
 
-def get_first_perfil() -> Optional[Dict]:
-    """Devuelve el primer perfil disponible (sistema mono-candidato)."""
-    results = _get("perfil_base", "order=created_at.asc&limit=1")
-    return results[0] if results else None
+def get_first_perfil() -> Optional[dict]:
+    """Fallback: primer perfil de la tabla (cuando solo hay uno)."""
+    result = _get("perfil_base", "order=created_at.asc&limit=1")
+    return result[0] if result else None
 
-def create_application(data: Dict) -> Dict:
-    """Crea una nueva candidatura."""
+def create_perfil(data: dict) -> dict:
+    return _post("perfil_base", data)
+
+# ─── APLICACIONES ────────────────────────────────────────────────
+
+def create_application(data: dict) -> dict:
     return _post("aplicaciones_career", data)
 
-def update_application(app_id: str, data: Dict) -> Dict:
-    """Actualiza una candidatura por ID."""
-    return _patch("aplicaciones_career", f"id=eq.{app_id}", data)
+def update_application(app_id: str, data: dict) -> dict:
+    return _patch("aplicaciones_career", "id", app_id, data)
 
-def log_ejecucion(data: Dict) -> Dict:
-    """Registra una ejecucion del pipeline."""
-    return _post("career_ejecuciones", data)
+def get_applications_by_perfil(perfil_id: str, limit: int = 50) -> list:
+    return _get("aplicaciones_career",
+                f"perfil_id=eq.{perfil_id}&order=created_at.desc&limit={limit}")
 
-def url_seen(url: str) -> bool:
-    """Verifica si una URL ya fue vista por el scanner."""
-    results = _get("scan_history", f"url=eq.{urllib.request.quote(url, safe='')}")
-    return len(results) > 0
+def get_all_applications(limit: int = 50) -> list:
+    return _get("aplicaciones_career", f"order=created_at.desc&limit={limit}")
 
-def add_scan_history(url: str, portal: str, company: str, title: str, status: str):
-    """Registra una URL en el historial del scanner."""
+def get_pending_applications(perfil_id: Optional[str] = None) -> list:
+    base = "status=eq.pendiente&order=created_at.desc&limit=20"
+    if perfil_id:
+        base = f"perfil_id=eq.{perfil_id}&{base}"
+    return _get("aplicaciones_career", base)
+
+# ─── SCAN HISTORY ────────────────────────────────────────────────
+
+def get_scan_history() -> list:
+    return _get("scan_history", "select=url&limit=5000")
+
+def upsert_scan_history(data: dict) -> dict:
+    url = f"{SUPABASE_URL}/rest/v1/scan_history"
+    h = _headers()
+    h["Prefer"] = "resolution=merge-duplicates,return=representation"
+    body = json.dumps(data).encode()
+    req = urllib.request.Request(url, data=body, headers=h, method="POST")
     try:
-        _post("scan_history", {"url": url, "portal": portal, "company": company,
-                                "job_title": title, "status": status})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode())
     except Exception:
-        pass  # Ignorar duplicados (UNIQUE constraint)
+        return {}
+
+# ─── LOG EJECUCIONES ─────────────────────────────────────────────
+
+def log_ejecucion(data: dict) -> dict:
+    return _post("career_ejecuciones", data)
