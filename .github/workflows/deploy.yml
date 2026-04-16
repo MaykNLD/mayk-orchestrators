@@ -42,6 +42,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} "mkdir -p /home/mayk/mayk-dev"
           scp -o StrictHostKeyChecking=no docker-compose.yml mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-dev/
           scp -o StrictHostKeyChecking=no -r pweb mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-dev/
+          scp -o StrictHostKeyChecking=no -r career mayk@${{ secrets.HOST_IP }}:/home/mayk/mayk-dev/
 
       # 6. Clonar mayk-agents y desplegar TODO en un único script SSH
       #    (evita race conditions entre comandos SSH separados)
@@ -52,6 +53,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
         run: |
           ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} \
@@ -60,6 +62,7 @@ jobs:
             SUPABASE_URL="$SUPABASE_URL" \
             SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
             SUPABASE_SECRET_KEY="$SUPABASE_SECRET_KEY" \
+            SUPABASE_KEY="$SUPABASE_KEY" \
             MAKE_WEBHOOK_URL="$MAKE_WEBHOOK_URL" \
             bash -s << 'DEPLOY_SCRIPT'
           set -euo pipefail
@@ -121,6 +124,7 @@ jobs:
           export SUPABASE_URL
           export SUPABASE_ANON_KEY
           export SUPABASE_SECRET_KEY
+          export SUPABASE_KEY
           export MAKE_WEBHOOK_URL
 
           docker compose up -d --build --force-recreate
