@@ -185,10 +185,21 @@ def ejecutar_proyecto(req: ProyectoRequest):
     """
     t_inicio = time.time()
 
+    # Mapeo de tipos de CLI a la DB ENUM ('tipo_proyecto_enum')
+    enum_map = {
+        "landing":   "landing-page",
+        "ecommerce": "e-commerce",
+        "saas":      "saas-dashboard",
+        "crm":       "sistema-crm-apis",
+        "pwa":       "web-corporativa",
+        "app-movil": "saas-dashboard"
+    }
+    tipo_db = enum_map.get(req.tipo_proyecto, "landing-page")
+
     # ── Persistir proyecto en Supabase ─────────────────────────────────────
     proyecto_row = supa_insert("proyectos", {
         "nombre":          req.nombre_proyecto,
-        "tipo":            req.tipo_proyecto,
+        "tipo":            tipo_db,
         "objetivo":        req.objetivo,
         "url_existente":   req.url_existente,
         "stack_existente": req.stack_existente,
