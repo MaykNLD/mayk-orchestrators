@@ -1,0 +1,136 @@
+# portals.yml — Configuracion del scanner (mercado ES + bilingue)
+# Edita segun tus preferencias y tecnologias
+
+title_filter:
+  positive:
+    - developer
+    - engineer
+    - backend
+    - frontend
+    - fullstack
+    - full-stack
+    - python
+    - java
+    - javascript
+    - typescript
+    - react
+    - node
+    - QA
+    - testing
+    - devops
+    - software
+    - programador
+    - desarrollador
+  negative:
+    - principal
+    - staff
+    - VP
+    - director
+    - manager
+    - head of
+    - CTO
+    - C-level
+  seniority_boost:
+    - junior
+    - mid
+    - associate
+    - graduate
+    - trainee
+    - becario
+
+search_queries:
+  - name: "Backend Developer Spain Ashby"
+    query: "site:jobs.ashbyhq.com backend developer spain"
+    enabled: true
+
+  - name: "Python Engineer Greenhouse Spain"
+    query: "site:boards.greenhouse.io python engineer spain"
+    enabled: true
+
+  - name: "Junior Developer Lever Spain"
+    query: "site:jobs.lever.co developer junior spain"
+    enabled: true
+
+  - name: "Full Stack EU Remote"
+    query: "site:jobs.ashbyhq.com fullstack remote europe junior"
+    enabled: true
+
+  - name: "Java Developer Spain"
+    query: "site:boards.greenhouse.io java developer spain junior"
+    enabled: true
+
+  - name: "React Developer Barcelona Madrid"
+    query: "site:jobs.ashbyhq.com OR site:jobs.lever.co react developer barcelona OR madrid"
+    enabled: true
+
+tracked_companies:
+  # Empresas tech Spain con buenos equipos y cultura
+  - name: "Factorial HR"
+    careers_url: "https://jobs.ashbyhq.com/factorial"
+    api_provider: ashby
+    enabled: true
+
+  - name: "Typeform"
+    careers_url: "https://www.typeform.com/careers/"
+    enabled: true
+
+  - name: "Holded"
+    careers_url: "https://jobs.ashbyhq.com/holded"
+    api_provider: ashby
+    enabled: true
+
+  - name: "Adevinta"
+    careers_url: "https://jobs.lever.co/adevinta"
+    api: "https://api.lever.co/v0/postings/adevinta?mode=json"
+    api_provider: lever
+    enabled: true
+
+  - name: "Glovo"
+    careers_url: "https://jobs.lever.co/glovo"
+    api: "https://api.lever.co/v0/postings/glovo?mode=json"
+    api_provider: lever
+    enabled: true
+
+  - name: "Wallbox"
+    careers_url: "https://jobs.ashbyhq.com/wallbox"
+    api_provider: ashby
+    enabled: true
+
+  - name: "Travelperk"
+    careers_url: "https://jobs.ashbyhq.com/travelperk"
+    api_provider: ashby
+    enabled: true
+
+  - name: "Veridas"
+    careers_url: "https://jobs.lever.co/veridas"
+    api_provider: lever
+    enabled: true
+
+  - name: "Seat:Code"
+    careers_url: "https://jobs.lever.co/seatcode"
+    api_provider: lever
+    enabled: true
+
+  - name: "Carto"
+    careers_url: "https://boards.greenhouse.io/carto"
+    api_provider: greenhouse
+    enabled: true
+
+  - name: "Bcnc Group"
+    careers_url: "https://bcncgroup.com/careers"
+    enabled: false  # Portal custom, requiere Playwright
+
+  - name: "Inditex Tech"
+    careers_url: "https://www.inditex.com/en/careers"
+    enabled: false  # Portal custom, requiere Playwright
+
+  - name: "Teamtailor Companies ES"
+    query_url: "https://career.teamtailor.com/?q=developer&location=spain"
+    api_provider: teamtailor
+    enabled: false  # Activar cuando scanner nivel 2 este listo
+
+settings:
+  min_days_fresh: 30        # Ignorar ofertas de mas de 30 dias
+  dedup_check: true         # Verificar contra scan_history
+  max_per_run: 50           # Maximo de ofertas a procesar por scan
+  notify_threshold: 1       # Notificar si hay al menos 1 nueva oferta
