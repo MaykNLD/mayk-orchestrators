@@ -1,0 +1,34 @@
+{
+  "_descripcion": "Estructura de referencia del handoff entre agentes. No usar directamente.",
+  "sesion_id": "uuid-generado",
+  "perfil_id": "uuid-supabase-perfil-base",
+  "aplicacion_id": "uuid-supabase-aplicacion",
+  "candidato": {
+    "nombre": "string",
+    "apellido": "string",
+    "idioma": "ES|EN",
+    "mercado": "ES|EU|LATAM|US"
+  },
+  "oferta": {
+    "url": "string",
+    "empresa": "string",
+    "rol": "string",
+    "portal_type": "ashby|greenhouse|lever|custom"
+  },
+  "evaluador_output": {
+    "fit_score": 0.0,
+    "grado": "A|B|C|D|F",
+    "recomendacion": "string",
+    "keywords_clave": [],
+    "bloque_e_personalizacion": "string"
+  },
+  "sastre_output": {
+    "cv_adaptado_json": {},
+    "keywords_insertadas": [],
+    "resumen_narrativo": "string"
+  },
+  "pdf_path": "output/empresa-rol-YYYY-MM.pdf",
+  "supabase_pdf_url": "string",
+  "status": "pendiente|evaluando|cv_generado|aplicado|rechazado|descartado",
+  "timestamp": "ISO8601"
+}
