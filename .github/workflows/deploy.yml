@@ -97,6 +97,21 @@ jobs:
             fi
           done
 
+          # --- LIMPIEZA NUCLEAR: eliminar CUALQUIER contenedor mayk-dev primero ---
+          echo ">>> Limpieza forzada de contenedores y redes anteriores..."
+          cd /home/mayk/mayk-dev
+          docker compose down -v --remove-orphans 2>/dev/null || true
+          FORZAR_RM=$(docker ps -a --filter "name=mayk-dev" -q 2>/dev/null)
+          if [ -n "$FORZAR_RM" ]; then
+            echo "  Eliminando contenedores residuales: $FORZAR_RM"
+            docker rm -f $FORZAR_RM
+          fi
+          docker network ls --filter "name=mayk-dev" -q | xargs -r docker network rm 2>/dev/null || true
+          echo "  Limpieza OK"
+
+          # Pausa de seguridad para que Docker libere recursos
+          sleep 3
+
           # --- Desplegar con docker compose ---
           echo ">>> Iniciando docker compose..."
           cd /home/mayk/mayk-dev
@@ -108,14 +123,6 @@ jobs:
           export SUPABASE_SECRET_KEY
           export MAKE_WEBHOOK_URL
 
-          # Parar y eliminar completamente todos los contenedores del proyecto
-          cd /home/mayk/mayk-dev
-          docker compose down -v --remove-orphans 2>/dev/null || true
-          # Forzar eliminación de cualquier contenedor residual por nombre
-          FORZAR_RM=$(docker ps -a --filter "name=mayk-dev" -q)
-          if [ ! -z "$FORZAR_RM" ]; then docker rm -f $FORZAR_RM; fi
-          # Eliminar redes residuales
-          docker network ls | grep mayk-dev | awk '{print $1}' | xargs -r docker network rm || true
           docker compose up -d --build --force-recreate
 
           echo "=== Deploy completado ==="
