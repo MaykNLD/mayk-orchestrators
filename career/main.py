@@ -152,7 +152,11 @@ def evaluar(req: EvaluarRequest):
         grado         = eval_resp.get("grado", "F")
         recomendacion = eval_resp.get("recomendacion", "Descartar")
         raw_result    = eval_resp.get("result", "{}")
-        raw_analysis  = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+        try:
+            raw_analysis = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+        except Exception:
+            raw_analysis = {"error_parsing": str(raw_result)}
+            
         raw_analysis["fit_score"] = fit_score
         raw_analysis["grado"]     = grado
 
