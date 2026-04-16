@@ -27,3 +27,9 @@ logs/
 # Temporales
 tmp/
 temp/
+# Career-Ops data (gitignored)
+career/data/portals.yml
+career/data/scan-history.tsv
+career/output/
+career/perfiles-candidatos/
+career/.env
