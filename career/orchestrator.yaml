@@ -1,0 +1,15 @@
+id: career
+name: "Orquestador Career-Ops"
+version: "1.0.0"
+description: >
+  Modulo de busqueda de empleo del ecosistema mayk.dev.
+  Evalua ofertas de trabajo, adapta CVs para ATS, genera PDFs
+  y gestiona el pipeline de candidaturas. Inspirado en career-ops (santifer).
+entry_point: main.py
+port: 8020
+agents:
+  - agente-hr-evaluador
+  - agente-hr-sastre
+data_layer: supabase
+notification: make_webhook + telegram
+cli_entry: mayk-cli.py opcion 3
