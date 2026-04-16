@@ -1,0 +1,11 @@
+{
+  "name": "career-ops-pdf",
+  "version": "1.0.0",
+  "description": "Playwright PDF generation for Career-Ops",
+  "scripts": {
+    "install-browser": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
