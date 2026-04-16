@@ -103,3 +103,4 @@ services:
       - mayk-net
     restart: unless-stopped
     mem_limit: 256m
+ 
