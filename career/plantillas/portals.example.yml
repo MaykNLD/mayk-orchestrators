@@ -1,0 +1,81 @@
+# portals.yml — Configuracion del scanner de ofertas
+# Copia este archivo a career/data/portals.yml y personaliza.
+
+title_filter:
+  positive:
+    - developer
+    - engineer
+    - backend
+    - frontend
+    - fullstack
+    - full-stack
+    - python
+    - java
+    - javascript
+    - typescript
+    - QA
+    - testing
+    - devops
+  negative:
+    - principal
+    - staff
+    - VP
+    - director
+    - manager
+    - head of
+    - CTO
+    - lead    # Quitar si buscas posiciones de lead
+  seniority_boost:
+    - junior
+    - mid
+    - associate
+    - graduate
+
+search_queries:
+  - name: "Backend Developer Spain"
+    query: "site:jobs.ashbyhq.com backend developer spain"
+    enabled: true
+
+  - name: "Python Engineer Greenhouse"
+    query: "site:boards.greenhouse.io python engineer junior"
+    enabled: true
+
+  - name: "Frontend React Lever"
+    query: "site:jobs.lever.co react developer junior spain"
+    enabled: true
+
+  - name: "Full Stack EU Remote"
+    query: "site:jobs.ashbyhq.com fullstack remote europe"
+    enabled: true
+
+tracked_companies:
+  - name: "Factorial HR"
+    careers_url: "https://jobs.ashbyhq.com/factorial"
+    api: "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams"
+    api_provider: ashby
+    enabled: true
+
+  - name: "Typeform"
+    careers_url: "https://www.typeform.com/careers/"
+    enabled: true
+
+  - name: "Holded"
+    careers_url: "https://jobs.ashbyhq.com/holded"
+    api_provider: ashby
+    enabled: true
+
+  - name: "Jobandtalent"
+    careers_url: "https://www.jobandtalent.com/en/jobs"
+    enabled: true
+
+  - name: "Adevinta"
+    careers_url: "https://jobs.lever.co/adevinta"
+    api: "https://api.lever.co/v0/postings/adevinta?mode=json"
+    api_provider: lever
+    enabled: true
+
+  - name: "Glovo"
+    careers_url: "https://jobs.lever.co/glovo"
+    api: "https://api.lever.co/v0/postings/glovo?mode=json"
+    api_provider: lever
+    enabled: true
