@@ -103,6 +103,51 @@ services:
       - mayk-net
     restart: unless-stopped
     mem_limit: 256m
- 
- 
- 
+  # ── Career-Ops Agents ──────────────────────────────────────
+  agente-hr-evaluador:
+    build:
+      context: ../mayk-agents/agente-hr-evaluador
+      dockerfile: Dockerfile
+    ports:
+      - "8011:8011"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    restart: unless-stopped
+    networks:
+      - mayk-net
+
+  agente-hr-sastre:
+    build:
+      context: ../mayk-agents/agente-hr-sastre
+      dockerfile: Dockerfile
+    ports:
+      - "8012:8012"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    restart: unless-stopped
+    networks:
+      - mayk-net
+
+  career-orchestrator:
+    build:
+      context: ./career
+      dockerfile: Dockerfile
+    ports:
+      - "8020:8020"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - MAKE_WEBHOOK_URL=${MAKE_WEBHOOK_URL}
+      - AGENTE_HR_EVALUADOR_URL=http://agente-hr-evaluador:8011
+      - AGENTE_HR_SASTRE_URL=http://agente-hr-sastre:8012
+      - CAREER_MIN_SCORE=3.0
+    depends_on:
+      - agente-hr-evaluador
+      - agente-hr-sastre
+    volumes:
+      - ./career/output:/app/output
+      - ./career/data:/app/data
+    restart: unless-stopped
+    networks:
+      - mayk-net
