@@ -214,17 +214,30 @@ def analizar_perfil(req: AnalizarPerfilRequest):
 
     nombre = f"{perfil.get('nombre', '')} {perfil.get('apellido', '')}".strip()
 
-    # Paso 1: RRHH-01 analiza el CV
-    try:
-        rrhh_resp = call_agent(RRHH_URL, "/analizar-cv", {
-            "perfil_id": req.perfil_id,
-            "cv_texto":  req.cv_texto,
-            "idioma":    req.idioma,
-        }, timeout=240)
-    except Exception as e:
-        raise HTTPException(500, f"Error en agente-hr-rrhh: {e}")
-
-    version_id = rrhh_resp.get("version_id")
+    # Paso 1: Dependiendo de si hay cv_texto, analizamos con RRHH o recuperamos el CV existente
+    version_id = None
+    cv_markdown = perfil.get("cv_markdown", "")
+    
+    if req.cv_texto and req.cv_texto.strip():
+        try:
+            rrhh_resp = call_agent(RRHH_URL, "/analizar-cv", {
+                "perfil_id": req.perfil_id,
+                "cv_texto":  req.cv_texto,
+                "idioma":    req.idioma,
+            }, timeout=240)
+            version_id = rrhh_resp.get("version_id")
+            cv_markdown = rrhh_resp.get("cv_mejorado", "")
+        except Exception as e:
+            raise HTTPException(500, f"Error en agente-hr-rrhh: {e}")
+        
+        nivel = rrhh_resp.get("nivel_detectado", "")
+        mens_estado = "CV nuevo analizado por RRHH-01. Diseño y PDF generándose."
+    else:
+        if not cv_markdown.strip():
+            raise HTTPException(400, "No has proporcionado un CV y tampoco existe uno previo en tu perfil.")
+        # Usamos el CV previamente guardado.
+        nivel = perfil.get("nivel", "")
+        mens_estado = "Usando CV existente en base de datos. Diseño y PDF generándose directamente."
 
     # Paso 2: Diseño en background (no bloquea)
     t = threading.Thread(
@@ -237,14 +250,9 @@ def analizar_perfil(req: AnalizarPerfilRequest):
     return {
         "perfil_id":          req.perfil_id,
         "perfil":             nombre,
-        "nivel_detectado":    rrhh_resp.get("nivel_detectado"),
-        "objetivo":           rrhh_resp.get("objetivo_profesional"),
-        "skills_clave":       rrhh_resp.get("skills_clave", []),
-        "brechas_detectadas": rrhh_resp.get("brechas_detectadas", ""),
-        "version_id":         version_id,
-        "advertencias":       rrhh_resp.get("advertencias", []),
+        "nivel_detectado":    nivel,
         "estado":             "cv_analizando_diseno",
-        "mensaje":            f"CV analizado por RRHH-01. Diseño y PDF generándose. Recibirás notificación por Telegram.",
+        "mensaje":            f"{mens_estado} Recibirás notificación por Telegram.",
     }
 
 
