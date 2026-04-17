@@ -216,7 +216,7 @@ def analizar_perfil(req: AnalizarPerfilRequest):
 
     # Paso 1: Dependiendo de si hay cv_texto, analizamos con RRHH o recuperamos el CV existente
     version_id = None
-    cv_markdown = perfil.get("cv_markdown", "")
+    cv_markdown = perfil.get("cv_markdown") or ""
     
     if req.cv_texto and req.cv_texto.strip():
         try:
