@@ -1,16 +1,13 @@
 # docker-compose.yml — mayk.dev Ecosystem
 # Levanta el orquestador + 5 agentes en red privada interna.
 # Las keys se inyectan desde GitHub Secrets en CI o desde .env local (nunca hardcodeadas).
-# Consumo estimado RAM idle: ~400-600 MB en total.
 
 version: "3.9"
 
-# ── Red privada interna (no expuesta al exterior) ─────────────────────────────
 networks:
   mayk-net:
     driver: bridge
 
-# ── Variables de entorno comunes (inyectadas desde GitHub Secrets / .env) ─────
 x-common-env: &common-env
   OPENROUTER_API_KEY:  ${OPENROUTER_API_KEY}
   SUPABASE_URL:        ${SUPABASE_URL}
@@ -39,7 +36,6 @@ services:
     restart: unless-stopped
     mem_limit: 256m
 
-  # ── 1. Agente Auditor ─────────────────────────────────────────────────────
   agente-auditor:
     build:
       context: ../mayk-agents/agente-auditor
@@ -52,7 +48,6 @@ services:
     restart: unless-stopped
     mem_limit: 256m
 
-  # ── 2. Agente Estratega ───────────────────────────────────────────────────
   agente-estratega:
     build:
       context: ../mayk-agents/agente-estratega
@@ -65,7 +60,6 @@ services:
     restart: unless-stopped
     mem_limit: 256m
 
-  # ── 3. Agente Visual ─────────────────────────────────────────────────────
   agente-visual:
     build:
       context: ../mayk-agents/agente-visual
@@ -78,7 +72,6 @@ services:
     restart: unless-stopped
     mem_limit: 256m
 
-  # ── 4. Agente Dev ─────────────────────────────────────────────────────────
   agente-dev:
     build:
       context: ../mayk-agents/agente-dev
@@ -89,9 +82,8 @@ services:
     networks:
       - mayk-net
     restart: unless-stopped
-    mem_limit: 512m  # Dev necesita más por respuestas de código extenso
+    mem_limit: 512m
 
-  # ── 5. Agente QA-Ops ─────────────────────────────────────────────────────
   agente-qa-ops:
     build:
       context: ../mayk-agents/agente-qa-ops
@@ -103,7 +95,8 @@ services:
       - mayk-net
     restart: unless-stopped
     mem_limit: 256m
-  # ── Career-Ops Agents ──────────────────────────────────────
+
+  # ── Career-Ops Agents ────────────────────────────────────────────
   agente-hr-evaluador:
     build:
       context: ../mayk-agents/agente-hr-evaluador
@@ -112,6 +105,10 @@ services:
       - "8011:8011"
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+    volumes:
+      - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
     networks:
       - mayk-net
@@ -124,6 +121,58 @@ services:
       - "8012:8012"
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+    volumes:
+      - ../mayk-agents/shared:/app/shared:ro
+    restart: unless-stopped
+    networks:
+      - mayk-net
+
+  agente-hr-rrhh:
+    build:
+      context: ../mayk-agents/agente-hr-rrhh
+      dockerfile: Dockerfile
+    ports:
+      - "8013:8013"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+    volumes:
+      - ../mayk-agents/shared:/app/shared:ro
+    restart: unless-stopped
+    networks:
+      - mayk-net
+
+  agente-hr-diseno:
+    build:
+      context: ../mayk-agents/agente-hr-diseno
+      dockerfile: Dockerfile
+    ports:
+      - "8014:8014"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+    volumes:
+      - ../mayk-agents/shared:/app/shared:ro
+    restart: unless-stopped
+    networks:
+      - mayk-net
+
+  agente-scanner:
+    build:
+      context: ../mayk-agents/agente-scanner
+      dockerfile: Dockerfile
+    ports:
+      - "8015:8015"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+      - ORCHESTRATOR_URL=http://career-orchestrator:8020
+    volumes:
+      - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
     networks:
       - mayk-net
@@ -137,14 +186,18 @@ services:
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_KEY}
+      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
       - MAKE_WEBHOOK_URL=${MAKE_WEBHOOK_URL}
       - AGENTE_HR_EVALUADOR_URL=http://agente-hr-evaluador:8011
       - AGENTE_HR_SASTRE_URL=http://agente-hr-sastre:8012
+      - AGENTE_HR_RRHH_URL=http://agente-hr-rrhh:8013
+      - AGENTE_HR_DISENO_URL=http://agente-hr-diseno:8014
       - CAREER_MIN_SCORE=3.0
     depends_on:
       - agente-hr-evaluador
       - agente-hr-sastre
+      - agente-hr-rrhh
+      - agente-hr-diseno
     volumes:
       - ./career/output:/app/output
       - ./career/data:/app/data
