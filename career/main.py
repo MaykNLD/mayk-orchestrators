@@ -85,11 +85,10 @@ def _agent_health(name: str, url: str) -> str:
 # ── Sastre en background (no bloquea respuesta al usuario) ───────────
 def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma: str):
     try:
-        # Usar cv_markdown si existe, fallback a datos_json (retrocompatibilidad)
-        cv_base = perfil.get("cv_markdown") or json.dumps(perfil.get("datos_json", {}))
-
+        cv_base_dict = {"cv_markdown": perfil.get("cv_markdown")} if perfil.get("cv_markdown") else perfil.get("datos_json", {})
+        
         sastre_resp = call_agent(SASTRE_URL, "/execute", {
-            "perfil_base_json":        cv_base,
+            "perfil_base_json":        cv_base_dict,
             "analisis_evaluador_json": raw_analysis,
             "idioma":                  idioma,
             "mercado_geografico":      perfil.get("mercado", "ES"),
@@ -102,19 +101,28 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
         except Exception:
             cv_data = {"contenido": str(raw_result)}
 
-        # Intentar generar PDF via agente-hr-diseno
+        # Generar PDF directamente desde el CV adaptado del Sastre con Playwright
         pdf_url = None
-        html_cv = None
         try:
-            diseno_resp = call_agent(DISENO_URL, "/generar-cv-html", {
-                "perfil_id": perfil["id"],
-                "foto_modo": "sin_foto",
-                "idioma":    idioma,
-            }, timeout=240)
-            pdf_url  = diseno_resp.get("pdf_url")
-            html_cv  = diseno_resp.get("html_cv", "")[:500]  # solo preview en log
+            import time
+            from pathlib import Path as _Path
+            from generate_pdf import generate_pdf
+
+            # Seleccionar template segun idioma
+            tmpl_name = "cv-template-en.html" if idioma == "EN" else "cv-template.html"
+            tmpl_path = str(_Path(__file__).parent / "plantillas" / tmpl_name)
+
+            ts = int(time.time())
+            perfil_id = perfil.get("id", "unknown")
+            out_dir = _Path("/app/output")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = str(out_dir / f"{perfil_id}_{ts}.pdf")
+
+            generate_pdf(cv_data, tmpl_path, out_path, idioma)
+            pdf_url = f"/output/{perfil_id}_{ts}.pdf"  # Ruta relativa servida por el contenedor
+            print(f"[orchestrator] PDF generado: {out_path}")
         except Exception as e:
-            print(f"[orchestrator] Diseño no disponible: {e}")
+            print(f"[orchestrator] Error generando PDF local: {e}")
 
         update_application(app_id, {
             "tailored_content": cv_data,
@@ -123,12 +131,21 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "status":           "cv_generado",
         })
 
-        empresa = raw_analysis.get("bloque_a", {}).get("empresa", "?") \
-                  if isinstance(raw_analysis.get("bloque_a"), dict) else "?"
-        rol     = raw_analysis.get("bloque_a", {}).get("rol", "?") \
-                  if isinstance(raw_analysis.get("bloque_a"), dict) else "?"
-        fit_sc  = raw_analysis.get("fit_score", 0.0)
-        grado   = raw_analysis.get("grado", "?")
+        # Extraer empresa y rol del bloque_a (puede ser string markdown o dict)
+        bloque_a = raw_analysis.get("bloque_a", "")
+        if isinstance(bloque_a, dict):
+            empresa = bloque_a.get("empresa", "?")
+            rol     = bloque_a.get("rol", "?")
+        else:
+            # Buscar en el string markdown lines tipo "Empresa: X"
+            import re as _re2
+            empresa_m = _re2.search(r"(?:empresa|company)[:\s]+([^\n|]+)", str(bloque_a), _re2.IGNORECASE)
+            rol_m     = _re2.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", str(bloque_a), _re2.IGNORECASE)
+            empresa   = empresa_m.group(1).strip() if empresa_m else "?"
+            rol       = rol_m.group(1).strip() if rol_m else "?"
+
+        fit_sc = raw_analysis.get("fit_score", 0.0)
+        grado  = raw_analysis.get("grado", "?")
 
         notify_make({
             "company": empresa,
@@ -138,10 +155,11 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "perfil":  f"{perfil.get('nombre','')} {perfil.get('apellido','')}",
             "status":  "cv_generado",
             "pdf_url": pdf_url or "pendiente",
-            "mensaje": f"CV adaptado generado. PDF disponible 24h: {pdf_url or 'pendiente'}",
+            "mensaje": f"CV adaptado generado para {empresa} — {rol}. Score {fit_sc}/5 ({grado}). PDF: {pdf_url or 'pendiente (error al generar)'}",
         })
 
     except Exception as e:
+        print(f"[orchestrator] Error en sastre background: {e}")
         if app_id:
             update_application(app_id, {"status": "error_sastre", "notas": str(e)})
 
@@ -228,6 +246,11 @@ def analizar_perfil(req: AnalizarPerfilRequest):
             version_id = rrhh_resp.get("version_id")
             cv_markdown = rrhh_resp.get("cv_mejorado", "")
         except Exception as e:
+            notify_make({
+                "perfil": nombre,
+                "status": "error_ia",
+                "mensaje": f"Ups, el agente HR-RRHH (OpenRouter) ha fallado al analizar tu CV: {str(e)}"
+            })
             raise HTTPException(500, f"Error en agente-hr-rrhh: {e}")
         
         nivel = rrhh_resp.get("nivel_detectado", "")
@@ -272,7 +295,7 @@ def evaluar(req: EvaluarRequest):
         raise HTTPException(404, "Perfil no encontrado en Supabase.")
 
     # Usar cv_markdown si existe, fallback a datos_json (retrocompatibilidad)
-    cv_base = perfil.get("cv_markdown") or json.dumps(perfil.get("datos_json", {}))
+    cv_base_dict = {"cv_markdown": perfil.get("cv_markdown")} if perfil.get("cv_markdown") else perfil.get("datos_json", {})
 
     app_record = create_application({
         "perfil_id": perfil["id"],
@@ -288,7 +311,7 @@ def evaluar(req: EvaluarRequest):
         eval_resp = call_agent(EVALUADOR_URL, "/execute", {
             "url_oferta":       req.url_oferta or "",
             "texto_oferta":     req.texto_oferta or "",
-            "perfil_base_json": cv_base,
+            "perfil_base_json": cv_base_dict,
             "idioma":           req.idioma,
         })
         fit_score     = float(eval_resp.get("fit_score", 0.0))
@@ -314,6 +337,15 @@ def evaluar(req: EvaluarRequest):
     except Exception as e:
         if app_id:
             update_application(app_id, {"status": "error_evaluador", "notas": str(e)})
+        notify_make({
+            "perfil": f"{perfil.get('nombre', '')} {perfil.get('apellido', '')}",
+            "status": "error_ia",
+            "company": "?",
+            "role": "?",
+            "score": 0.0,
+            "grado": "F",
+            "mensaje": f"El Evaluador IA colapsó al revisar la oferta: {str(e)}"
+        })
         raise HTTPException(500, f"Error en agente evaluador: {e}")
 
     result = {
