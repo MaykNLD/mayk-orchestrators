@@ -158,19 +158,19 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "status":           "cv_generado",
         })
 
-        # Extraer empresa y rol del bloque_a (puede ser string markdown o dict)
-        bloque_a = raw_analysis.get("bloque_a", "")
-        empresa, rol = "Desconocida", "No especificado"
-        if isinstance(bloque_a, dict):
-            empresa = bloque_a.get("empresa", empresa)
-            rol     = bloque_a.get("rol", rol)
-        elif isinstance(bloque_a, str) and len(bloque_a) > 5:
-            # Buscar en el string markdown lines tipo "Empresa: X"
-            import re as _re2
-            empresa_m = _re2.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re2.IGNORECASE)
-            rol_m     = _re2.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", bloque_a, _re2.IGNORECASE)
-            empresa   = empresa_m.group(1).strip() if empresa_m else empresa
-            rol       = rol_m.group(1).strip() if rol_m else rol
+        # Extraer empresa y rol
+        empresa, rol = raw_analysis.get("empresa", "Desconocida"), raw_analysis.get("rol", "No especificado")
+        if empresa == "Desconocida" or rol == "No especificado":
+            bloque_a = raw_analysis.get("bloque_a", "")
+            if isinstance(bloque_a, dict):
+                empresa = bloque_a.get("empresa", empresa)
+                rol     = bloque_a.get("rol", rol)
+            elif isinstance(bloque_a, str) and len(bloque_a) > 5:
+                import re as _re2
+                empresa_m = _re2.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re2.IGNORECASE)
+                rol_m     = _re2.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", bloque_a, _re2.IGNORECASE)
+                empresa   = empresa_m.group(1).strip() if empresa_m else empresa
+                rol       = rol_m.group(1).strip() if rol_m else rol
 
         fit_sc = raw_analysis.get("fit_score", 0.0)
         grado  = raw_analysis.get("grado", "?")
@@ -397,17 +397,18 @@ def evaluar(req: EvaluarRequest):
         result["estado"]  = "en_proceso"
     else:
         # Extraer empresa/rol para notificar el descarte
-        bloque_a = raw_analysis.get("bloque_a", "")
-        empresa_d, rol_d = "Desconocida", "No especificado"
-        if isinstance(bloque_a, dict):
-            empresa_d = bloque_a.get("empresa", empresa_d)
-            rol_d     = bloque_a.get("rol", rol_d)
-        elif isinstance(bloque_a, str) and len(bloque_a) > 5:
-            import re as _re3
-            e_m = _re3.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re3.IGNORECASE)
-            r_m = _re3.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", bloque_a, _re3.IGNORECASE)
-            empresa_d = e_m.group(1).strip() if e_m else empresa_d
-            rol_d     = r_m.group(1).strip() if r_m else rol_d
+        empresa_d, rol_d = raw_analysis.get("empresa", "Desconocida"), raw_analysis.get("rol", "No especificado")
+        if empresa_d == "Desconocida" or rol_d == "No especificado":
+            bloque_a = raw_analysis.get("bloque_a", "")
+            if isinstance(bloque_a, dict):
+                empresa_d = bloque_a.get("empresa", empresa_d)
+                rol_d     = bloque_a.get("rol", rol_d)
+            elif isinstance(bloque_a, str) and len(bloque_a) > 5:
+                import re as _re3
+                e_m = _re3.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re3.IGNORECASE)
+                r_m = _re3.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", bloque_a, _re3.IGNORECASE)
+                empresa_d = e_m.group(1).strip() if e_m else empresa_d
+                rol_d     = r_m.group(1).strip() if r_m else rol_d
 
         notify_make({
             "company": empresa_d, "role": rol_d, "score": fit_score, "grado": grado,
