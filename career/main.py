@@ -18,7 +18,8 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 from supabase_client import (
     list_perfiles, get_perfil_by_id, get_first_perfil,
-    create_application, update_application,
+    create_perfil, get_pending_applications, create_application, update_application,
+    upload_file_to_storage, get_storage_public_url,
     get_all_applications, get_applications_by_perfil, log_ejecucion
 )
 
@@ -129,10 +130,26 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             out_path = str(out_dir / f"{perfil_id}_{ts}.pdf")
 
             generate_pdf(cv_data, tmpl_path, out_path, idioma)
-            pdf_url = f"/output/{perfil_id}_{ts}.pdf"  # Ruta relativa servida por el contenedor
-            print(f"[orchestrator] PDF generado: {out_path}")
+            
+            # NUEVO: Subir a Supabase Storage para evitar exponer la URL local (Tailscale secure)
+            obj_path = f"{perfil_id}_{ts}.pdf"
+            with open(out_path, "rb") as f:
+                upload_res = upload_file_to_storage("pdfs", obj_path, f.read(), "application/pdf")
+            
+            if upload_res:
+                pdf_url = get_storage_public_url("pdfs", obj_path)
+                print(f"[orchestrator] PDF subido a Supabase: {pdf_url}")
+                # Opcional: Eliminar archivo local para no tener datos basura/zombies en el host
+                try:
+                    os.remove(out_path)
+                except Exception:
+                    pass
+            else:
+                print(f"[orchestrator] Error subiendo PDF a Supabase, usando fallback local")
+                pdf_url = f"/output/{obj_path}"
+                
         except Exception as e:
-            print(f"[orchestrator] Error generando PDF local: {e}")
+            print(f"[orchestrator] Error generando/subiendo PDF: {e}")
 
         update_application(app_id, {
             "tailored_content": cv_data,

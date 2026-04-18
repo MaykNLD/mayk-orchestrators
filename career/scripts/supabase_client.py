@@ -108,3 +108,32 @@ def upsert_scan_history(data: dict) -> dict:
 
 def log_ejecucion(data: dict) -> dict:
     return _post("career_ejecuciones", data)
+
+# ─── STORAGE ─────────────────────────────────────────────────────
+
+def upload_file_to_storage(bucket: str, path: str, file_bytes: bytes, content_type: str = "application/pdf") -> bool:
+    """Sube un archivo binario a un bucket de Supabase."""
+    url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{path}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": content_type
+    }
+    req = urllib.request.Request(url, data=file_bytes, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status in [200, 201]
+    except Exception as e:
+        print(f"[supabase_client] Error subiendo archivo a storage: {e}")
+        # Intentar forzar actualizacion (UPSERT)
+        try:
+            req_put = urllib.request.Request(url, data=file_bytes, headers=headers, method="PUT")
+            with urllib.request.urlopen(req_put, timeout=30) as r:
+                return r.status in [200, 201]
+        except Exception as e2:
+            print(f"[supabase_client] Supabase Upsert Storage error: {e2}")
+            return False
+
+def get_storage_public_url(bucket: str, path: str) -> str:
+    """Devuelve la URL publica de un archivo en Supabase Storage"""
+    return f"{SUPABASE_URL}/storage/v1/object/public/{bucket}/{path}"
