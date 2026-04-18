@@ -62,6 +62,16 @@ def call_agent(url: str, endpoint: str, payload: dict, timeout: int = 240) -> di
 def notify_make(payload: dict):
     if not MAKE_WEBHOOK:
         return
+    
+    # ── SANITIZACIÓN PARA TELEGRAM MARKDOWN ──
+    # Telegram Markdown falla (Bad Request) si hay '_' o '*' sin cerrar en los valores.
+    # Reemplazamos '_' con espacio en 'status' y sanitizamos el mensaje general.
+    if "status" in payload and isinstance(payload["status"], str):
+        payload["status"] = payload["status"].replace("_", " ")
+    
+    if "mensaje" in payload and isinstance(payload["mensaje"], str):
+        payload["mensaje"] = payload["mensaje"].replace("_", "\\_").replace("*", "")
+        
     try:
         data = json.dumps(payload).encode()
         req  = urllib.request.Request(
@@ -69,8 +79,8 @@ def notify_make(payload: dict):
             headers={"Content-Type": "application/json"}, method="POST"
         )
         urllib.request.urlopen(req, timeout=15)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[orchestrator] Error enviando webhook a Make.com: {e}")
 
 
 def _agent_health(name: str, url: str) -> str:
@@ -133,16 +143,17 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
 
         # Extraer empresa y rol del bloque_a (puede ser string markdown o dict)
         bloque_a = raw_analysis.get("bloque_a", "")
+        empresa, rol = "Desconocida", "No especificado"
         if isinstance(bloque_a, dict):
-            empresa = bloque_a.get("empresa", "?")
-            rol     = bloque_a.get("rol", "?")
-        else:
+            empresa = bloque_a.get("empresa", empresa)
+            rol     = bloque_a.get("rol", rol)
+        elif isinstance(bloque_a, str) and len(bloque_a) > 5:
             # Buscar en el string markdown lines tipo "Empresa: X"
             import re as _re2
-            empresa_m = _re2.search(r"(?:empresa|company)[:\s]+([^\n|]+)", str(bloque_a), _re2.IGNORECASE)
-            rol_m     = _re2.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", str(bloque_a), _re2.IGNORECASE)
-            empresa   = empresa_m.group(1).strip() if empresa_m else "?"
-            rol       = rol_m.group(1).strip() if rol_m else "?"
+            empresa_m = _re2.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re2.IGNORECASE)
+            rol_m     = _re2.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", bloque_a, _re2.IGNORECASE)
+            empresa   = empresa_m.group(1).strip() if empresa_m else empresa
+            rol       = rol_m.group(1).strip() if rol_m else rol
 
         fit_sc = raw_analysis.get("fit_score", 0.0)
         grado  = raw_analysis.get("grado", "?")
@@ -357,6 +368,7 @@ def evaluar(req: EvaluarRequest):
         "bloques":       raw_analysis,
     }
 
+    #Llama al sastre en thread separado si fit_score >= MIN_SCORE
     if fit_score >= MIN_SCORE:
         t = threading.Thread(
             target=run_sastre_background,
@@ -367,13 +379,27 @@ def evaluar(req: EvaluarRequest):
         result["mensaje"] = f"Score {fit_score}/5 ({grado}). CV adaptándose en background. Notificación por Telegram."
         result["estado"]  = "en_proceso"
     else:
+        # Extraer empresa/rol para notificar el descarte
+        bloque_a = raw_analysis.get("bloque_a", "")
+        empresa_d, rol_d = "Desconocida", "No especificado"
+        if isinstance(bloque_a, dict):
+            empresa_d = bloque_a.get("empresa", empresa_d)
+            rol_d     = bloque_a.get("rol", rol_d)
+        elif isinstance(bloque_a, str) and len(bloque_a) > 5:
+            import re as _re3
+            e_m = _re3.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re3.IGNORECASE)
+            r_m = _re3.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", bloque_a, _re3.IGNORECASE)
+            empresa_d = e_m.group(1).strip() if e_m else empresa_d
+            rol_d     = r_m.group(1).strip() if r_m else rol_d
+
         notify_make({
-            "company": "?", "role": "?", "score": fit_score, "grado": grado,
+            "company": empresa_d, "role": rol_d, "score": fit_score, "grado": grado,
             "perfil":  result["perfil"], "status": "descartado",
             "mensaje": f"Oferta descartada (score {fit_score} < {MIN_SCORE})"
         })
         result["mensaje"] = f"Score {fit_score}/5 ({grado}). Oferta descartada."
         result["estado"]  = "descartado"
+
 
     return result
 
