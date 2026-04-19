@@ -433,7 +433,7 @@ def evaluar(req: EvaluarRequest):
         notify_make({
             "company": empresa_d, "role": rol_d, "score": fit_score, "grado": grado,
             "perfil":  result["perfil"], "status": "descartado",
-            "mensaje": f"Oferta descartada (score {fit_score} < {MIN_SCORE})"
+            "mensaje": f"PDF NO GENERADO: Oferta descartada automáticamente por score bajo ({fit_score} < {MIN_SCORE})"
         })
         result["mensaje"] = f"Score {fit_score}/5 ({grado}). Oferta descartada."
         result["estado"]  = "descartado"
