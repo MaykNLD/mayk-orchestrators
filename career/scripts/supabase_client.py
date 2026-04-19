@@ -74,6 +74,10 @@ def create_application(data: dict) -> dict:
 def update_application(app_id: str, data: dict) -> dict:
     return _patch("aplicaciones_career", "id", app_id, data)
 
+def get_application(app_id: str) -> dict:
+    result = _get("aplicaciones_career", f"id=eq.{app_id}&limit=1")
+    return result[0] if result else {}
+
 def get_applications_by_perfil(perfil_id: str, limit: int = 50) -> list:
     return _get("aplicaciones_career",
                 f"perfil_id=eq.{perfil_id}&order=created_at.desc&limit={limit}")

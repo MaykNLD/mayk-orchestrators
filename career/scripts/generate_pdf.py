@@ -11,46 +11,55 @@ from datetime import datetime
 def render_cv_html(cv_json: dict, template_path: str, idioma: str = "ES") -> str:
     """Rellena el template HTML con los datos del CV adaptado."""
     tmpl = Path(template_path).read_text(encoding="utf-8")
+    
+    # Helper: convierte None a string vacío
+    def _s(v): return str(v) if v is not None else ""
 
     exp_html = ""
-    for job in cv_json.get("experiencia", []):
-        logros = "".join(f"<li>{l}</li>" for l in job.get("logros", []))
+    for job in (cv_json.get("experiencia") or []):
+        logros = "".join(f"<li>{_s(l)}</li>" for l in (job.get("logros") or []))
+        desc = _s(job.get("descripcion_adaptada") or job.get("descripcion", ""))
         exp_html += f"""
         <div class="experience-item">
           <div class="exp-header">
-            <span class="company">{job.get("empresa","")}</span>
-            <span class="period">{job.get("periodo","")}</span>
+            <span class="company">{_s(job.get("empresa"))}</span>
+            <span class="period">{_s(job.get("periodo"))}</span>
           </div>
-          <div class="role">{job.get("rol","")}</div>
-          <p>{job.get("descripcion_adaptada","")}</p>
+          <div class="role">{_s(job.get("rol"))}</div>
+          <p>{desc}</p>
           <ul>{logros}</ul>
         </div>"""
 
     proj_html = ""
-    for proj in cv_json.get("proyectos", []):
-        techs = ", ".join(proj.get("tecnologias", []))
+    for proj in (cv_json.get("proyectos") or []):
+        techs = ", ".join(proj.get("tecnologias") or [])
         url_tag = f'<a href="{proj["url"]}">{proj["url"]}</a>' if proj.get("url") else ""
+        desc_p = _s(proj.get("descripcion_adaptada") or proj.get("descripcion", ""))
         proj_html += f"""
         <div class="project-item">
-          <strong>{proj.get("nombre","")}</strong> — {techs} {url_tag}
-          <p>{proj.get("descripcion_adaptada","")}</p>
+          <strong>{_s(proj.get("nombre"))}</strong> — {techs} {url_tag}
+          <p>{desc_p}</p>
         </div>"""
 
-    skills = cv_json.get("skills", {})
-    skills_html = " · ".join(skills.get("principales", []) + skills.get("secundarias", []))
+    skills = cv_json.get("skills") or {}
+    skills_html = " · ".join((skills.get("principales") or []) + (skills.get("secundarias") or []))
 
     edu_html = ""
-    for edu in cv_json.get("educacion", []):
-        edu_html += f"<div><strong>{edu.get('titulo','')}</strong> — {edu.get('institucion','')} ({edu.get('año','')})</div>"
+    for edu in (cv_json.get("educacion") or []):
+        anio = edu.get("año") or edu.get("ano", "")
+        edu_html += f"<div><strong>{_s(edu.get('titulo'))}</strong> — {_s(edu.get('institucion'))} ({_s(anio)})</div>"
+
+    contactos = []
+    for k in ["email", "telefono", "ubicacion", "linkedin", "portfolio"]:
+        if cv_json.get(k):
+            contactos.append(f"<span>{cv_json[k]}</span>")
+    
+    contactos_html = "\n".join(contactos)
 
     filled = (tmpl
         .replace("{{NOMBRE}}",    cv_json.get("nombre", ""))
         .replace("{{TITULAR}}",   cv_json.get("titular", ""))
-        .replace("{{EMAIL}}",     cv_json.get("email", ""))
-        .replace("{{TELEFONO}}",  cv_json.get("telefono", ""))
-        .replace("{{UBICACION}}", cv_json.get("ubicacion", ""))
-        .replace("{{LINKEDIN}}",  cv_json.get("linkedin", ""))
-        .replace("{{PORTFOLIO}}", cv_json.get("portfolio", ""))
+        .replace("{{CONTACTOS}}", contactos_html)
         .replace("{{RESUMEN}}",   cv_json.get("resumen", ""))
         .replace("{{EXPERIENCIA}}", exp_html)
         .replace("{{PROYECTOS}}", proj_html)

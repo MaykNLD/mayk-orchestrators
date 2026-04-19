@@ -21,7 +21,7 @@ from supabase_client import (
     list_perfiles, get_perfil_by_id, get_first_perfil,
     create_perfil, get_pending_applications, create_application, update_application,
     upload_file_to_storage, get_storage_public_url,
-    get_all_applications, get_applications_by_perfil, log_ejecucion, log_error
+    get_all_applications, get_applications_by_perfil, get_application, log_ejecucion, log_error
 )
 
 # URLs de los agentes (inyectadas desde docker-compose / entorno)
@@ -163,7 +163,14 @@ def _agent_health(name: str, url: str) -> str:
 # ── Sastre en background (no bloquea respuesta al usuario) ───────────
 def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma: str, forzar: bool = False):
     try:
-        cv_base_dict = {"cv_markdown": perfil.get("cv_markdown")} if perfil.get("cv_markdown") else perfil.get("datos_json", {})
+        # Priorizar datos_json (extracón Lossless del RRHH) sobre cv_markdown
+        datos_json = perfil.get("datos_json") or {}
+        if isinstance(datos_json, str):
+            try:
+                datos_json = json.loads(datos_json)
+            except Exception:
+                datos_json = {}
+        cv_base_dict = datos_json if datos_json else {"cv_markdown": perfil.get("cv_markdown", "")}
         
         sastre_resp = call_agent(SASTRE_URL, "/execute", {
             "perfil_base_json":        cv_base_dict,
@@ -178,18 +185,24 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
         try:
             parsed = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
             # El Sastre envuelve el CV dentro de 'cv_adaptado_json'
-            cv_data = parsed.get("cv_adaptado_json", parsed)
+            inner = parsed.get("cv_adaptado_json", {})
+            # Si el Sastre devolvio datos reales, usarlos; si no, usar el perfil base directamente
+            cv_data = inner if inner and isinstance(inner, dict) and len(inner) > 2 else datos_json
         except Exception:
-            cv_data = {"contenido": str(raw_result)}
+            cv_data = datos_json  # Fallback 100% seguro: usar el CV base guardado por RRHH
 
-        # Enriquecer cv_data con datos personales del perfil para rellenar {{NOMBRE}} etc.
-        cv_data.setdefault("nombre",    f"{perfil.get('nombre', '')} {perfil.get('apellido', '')}".strip())
-        cv_data.setdefault("titular",   perfil.get("titular", perfil.get("titulo", "")))
-        cv_data.setdefault("email",     perfil.get("email", ""))
-        cv_data.setdefault("telefono",  perfil.get("telefono", ""))
-        cv_data.setdefault("ubicacion", perfil.get("ubicacion", perfil.get("ciudad", "")))
-        cv_data.setdefault("linkedin",  perfil.get("linkedin", ""))
-        cv_data.setdefault("portfolio", perfil.get("portfolio", perfil.get("github", "")))
+        # Enriquecer cv_data con datos personales del perfil (siempre con str para evitar None)
+        def _s(v): return str(v) if v is not None else ""
+        cv_data["nombre"]    = _s(f"{perfil.get('nombre', '')} {perfil.get('apellido', '')}".strip()) or cv_data.get("nombre", "")
+        cv_data["titular"]   = cv_data.get("titular") or _s(perfil.get("titular", ""))
+        cv_data["email"]     = _s(perfil.get("email", ""))
+        cv_data["telefono"]  = _s(perfil.get("telefono", ""))
+        cv_data["ubicacion"] = _s(perfil.get("ubicacion", ""))
+        cv_data["linkedin"]  = _s(perfil.get("linkedin", ""))
+        cv_data["portfolio"] = _s(perfil.get("github_url", ""))
+        # Resumen: garantizar string
+        if not cv_data.get("resumen"):
+            cv_data["resumen"] = _s(datos_json.get("resumen", ""))
 
         # Generar PDF directamente desde el CV adaptado del Sastre con Playwright
         pdf_url = None
@@ -205,30 +218,51 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             uid = uuid.uuid4().hex[:8]
             perfil_id = perfil.get("id", "unknown")
             out_dir = _Path("/app/output")
+            # Nombre limpio y profesional (Primer nombre + Primer apellido)
+            nom_raw = cv_data.get("nombre", "").strip().split()
+            ape_raw = perfil.get("apellido", "").strip().split()
+            
+            first_name = nom_raw[0] if nom_raw else "Candidato"
+            first_surname = ape_raw[0] if len(ape_raw) > 0 else (nom_raw[1] if len(nom_raw) > 1 else "")
+            
+            import re as _re_fn
+            rol_p = raw_analysis.get("rol", "Rol")
+            # Limpiar el rol para usarlo como nombre de archivo
+            rol_p = _re_fn.sub(r'[^\w]', '_', rol_p)   # reemplaza no-alfanum
+            rol_p = _re_fn.sub(r'_+', '_', rol_p).strip('_')  # colapsa ___ en _
+            
+            clean_filename = f"{first_name}_{first_surname}_CV_{rol_p}.pdf"
+            
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = str(out_dir / f"{perfil_id}_{uid}.pdf")
+            out_path = str(out_dir / clean_filename)
 
             generate_pdf(cv_data, tmpl_path, out_path, idioma)
             
-            # NUEVO: Subir a Supabase Storage para evitar exponer la URL local (Tailscale secure)
-            obj_path = f"{perfil_id}_{uid}.pdf"
+            # Subir a Supabase Storage
+            obj_path = clean_filename
             with open(out_path, "rb") as f:
                 upload_res = upload_file_to_storage("pdfs", obj_path, f.read(), "application/pdf")
             
+            # Zero-Residue Guarantee
+            try:
+                os.remove(out_path)
+            except Exception:
+                pass
+            
             if upload_res:
                 pdf_url = get_storage_public_url("pdfs", obj_path)
-                print(f"[orchestrator] PDF subido a Supabase: {pdf_url}")
-                # Opcional: Eliminar archivo local para no tener datos basura/zombies en el host
+                print(f"[orchestrator] PDF subido a Supabase de forma segura: {pdf_url}")
+            else:
+                print(f"[orchestrator] Error crítico subiendo PDF a Supabase Storage.")
+                
+        except Exception as e:
+            print(f"[orchestrator] Error generando/subiendo PDF: {e}")
+            # Ensure cleanup on crash
+            if 'out_path' in locals():
                 try:
                     os.remove(out_path)
                 except Exception:
                     pass
-            else:
-                print(f"[orchestrator] Error subiendo PDF a Supabase, usando fallback local")
-                pdf_url = f"/output/{obj_path}"
-                
-        except Exception as e:
-            print(f"[orchestrator] Error generando/subiendo PDF: {e}")
 
         update_application(app_id, {
             "tailored_content": cv_data,
@@ -237,8 +271,39 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "status":           "cv_generado",
         })
 
-        # Extraer empresa y rol desde raw_analysis (campos raíz primero)
-        empresa, rol = _get_empresa_rol(raw_analysis)
+        # Leer empresa y rol desde la BD (fuente de verdad) — no desde raw_analysis que puede ser incompleto
+        app_db = get_application(app_id) if app_id else {}
+        empresa = app_db.get("company") or _get_empresa_rol(raw_analysis)[0]
+        rol     = app_db.get("job_title") or _get_empresa_rol(raw_analysis)[1]
+        # Filtrar valores placeholder y aplicar heuristicas de URL si fallan
+        if empresa in ("Pendiente", "", "?", "Desconocida", None): 
+            empresa = _get_empresa_rol(raw_analysis)[0]
+        if rol in ("Oferta", "", "?", "No especificado", None): 
+            rol = _get_empresa_rol(raw_analysis)[1]
+
+        # HEURÍSTICA DE URL (ÚLTIMO RECURSO): Si sigue siendo Desconocida/No especificado
+        if app_db.get("url"):
+            from urllib.parse import urlparse
+            import re
+            parsed_url = urlparse(app_db["url"])
+            heuristica_aplicada = False
+            if empresa in ("?", "Desconocida", "Pendiente"):
+                empresa = "Desconocida"
+                heuristica_aplicada = True
+            if rol in ("?", "No especificado", "Oferta"):
+                path_parts = parsed_url.path.strip("/").split("/")
+                if path_parts:
+                    raw_path = path_parts[-1].split("-ID-")[0] # Buscojobs spec
+                    raw_path = raw_path.split("?")[0]
+                    rol = re.sub(r'[-_]', ' ', raw_path).title()
+                    heuristica_aplicada = True
+            
+            if heuristica_aplicada and app_id:
+                update_application(app_id, {
+                    "company": empresa,
+                    "job_title": rol
+                })
+
         fit_sc = raw_analysis.get("fit_score", 0.0)
         grado  = raw_analysis.get("grado", "?")
 
@@ -250,7 +315,7 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "perfil":  f"{perfil.get('nombre','')} {perfil.get('apellido','')}",
             "status":  "cv_generado",
             "pdf_url": pdf_url or "pendiente",
-            "mensaje": f"CV adaptado generado para {empresa} — {rol}. Score {fit_sc}/5 ({grado}). PDF: {pdf_url or 'pendiente (error al generar)'}",
+            "mensaje": f"CV adaptado generado para {empresa} — {rol}. Score {fit_sc}/5 ({grado}). PDF: {pdf_url or 'pendiente (error al generar)'}" ,
         })
 
     except Exception as e:
@@ -403,6 +468,7 @@ def evaluar(req: EvaluarRequest):
     # Usar cv_markdown si existe, fallback a datos_json (retrocompatibilidad)
     cv_base_dict = {"cv_markdown": perfil.get("cv_markdown")} if perfil.get("cv_markdown") else perfil.get("datos_json", {})
 
+    empresa_inicial, rol_inicial = _get_empresa_rol({})
     app_record = create_application({
         "perfil_id": perfil["id"],
         "job_title": "Pendiente de evaluacion",
@@ -449,12 +515,16 @@ def evaluar(req: EvaluarRequest):
             raw_analysis["rol"] = eval_resp["rol"]
 
         if app_id:
+            # Guardar empresa y rol en la BD tan pronto el evaluador los extrae
+            empresa_eval, rol_eval = _get_empresa_rol(raw_analysis)
             update_application(app_id, {
                 "fit_score":    fit_score,
                 "grado":        grado,
                 "raw_analysis": raw_analysis,
                 "keywords":     raw_analysis.get("keywords_clave", []),
                 "status":       "en_proceso" if fit_score >= MIN_SCORE else "descartado",
+                "company":      empresa_eval if empresa_eval not in ("?", "Desconocida", "") else "Pendiente",
+                "job_title":    rol_eval    if rol_eval    not in ("?", "No especificado", "") else "Oferta",
             })
     except Exception as e:
         if app_id:
