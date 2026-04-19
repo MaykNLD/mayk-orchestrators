@@ -9,8 +9,9 @@ Flujos disponibles:
   GET  /career/tracker          → Historial de aplicaciones
   GET  /health                  → Estado de todos los agentes
 """
-import os, json, sys, urllib.request, threading
+import os, json, sys, urllib.request, threading, re
 from pathlib import Path
+from html.parser import HTMLParser
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -32,6 +33,46 @@ MAKE_WEBHOOK  = os.environ.get("MAKE_WEBHOOK_URL", "")
 MIN_SCORE     = float(os.environ.get("CAREER_MIN_SCORE", "3.0"))
 
 app = FastAPI(title="Career-Ops Orchestrator", version="2.0.0")
+
+
+# ── Scraping de URLs de ofertas (stdlib puro, sin dependencias externas) ──
+class _TextExtractor(HTMLParser):
+    """Extrae texto plano de HTML ignorando scripts, estilos y atributos."""
+    def __init__(self):
+        super().__init__()
+        self._skip = False
+        self.chunks = []
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style", "noscript", "head"):
+            self._skip = True
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "noscript", "head"):
+            self._skip = False
+    def handle_data(self, data):
+        if not self._skip:
+            t = data.strip()
+            if t:
+                self.chunks.append(t)
+
+def _scrape_url(url: str, max_chars: int = 8000) -> str:
+    """Descarga la URL y extrae el texto legible. Devuelve string vacío si falla."""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Career-Ops/2.0)"},
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw_html = r.read().decode("utf-8", errors="replace")
+        parser = _TextExtractor()
+        parser.feed(raw_html)
+        text = " ".join(parser.chunks)
+        # Colapsar espacios múltiples
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text[:max_chars]
+    except Exception as e:
+        print(f"[orchestrator] Scraping fallido para {url}: {e}")
+        return ""
 
 
 # ── Helper: extrae empresa y rol de cualquier dict (eval_resp o raw_analysis) ──
@@ -65,6 +106,7 @@ class EvaluarRequest(BaseModel):
     texto_oferta: Optional[str] = None
     perfil_id:    Optional[str] = None
     idioma:       str = "ES"
+    forzar:       bool = False   # Si True, genera CV adaptado aunque el score sea bajo
 
 class AnalizarPerfilRequest(BaseModel):
     perfil_id:   str
@@ -358,11 +400,21 @@ def evaluar(req: EvaluarRequest):
     })
     app_id = app_record.get("id")
 
+    # ── Scraping previo: si hay URL y no hay texto_oferta, leer la web ──
+    texto_oferta = req.texto_oferta or ""
+    if req.url_oferta and not texto_oferta.strip():
+        print(f"[orchestrator] Scraping URL: {req.url_oferta}")
+        texto_oferta = _scrape_url(req.url_oferta)
+        if texto_oferta:
+            print(f"[orchestrator] Texto extraído: {len(texto_oferta)} caracteres")
+        else:
+            print(f"[orchestrator] Scraping vacío, se pasa la URL directamente al LLM")
+
     # Llamar al evaluador
     try:
         eval_resp = call_agent(EVALUADOR_URL, "/execute", {
             "url_oferta":       req.url_oferta or "",
-            "texto_oferta":     req.texto_oferta or "",
+            "texto_oferta":     texto_oferta,
             "perfil_base_json": cv_base_dict,
             "idioma":           req.idioma,
         })
@@ -416,26 +468,27 @@ def evaluar(req: EvaluarRequest):
         "bloques":       raw_analysis,
     }
 
-    #Llama al sastre en thread separado si fit_score >= MIN_SCORE
-    if fit_score >= MIN_SCORE:
+    # Lanzar Sastre si score >= MIN_SCORE  ó  si el usuario forzó el envío
+    empresa_r, rol_r = _get_empresa_rol(raw_analysis)
+    if fit_score >= MIN_SCORE or req.forzar:
         t = threading.Thread(
             target=run_sastre_background,
             args=(app_id, perfil, raw_analysis, req.idioma),
             daemon=True
         )
         t.start()
-        result["mensaje"] = f"Score {fit_score}/5 ({grado}). CV adaptándose en background. Notificación por Telegram."
+        if req.forzar and fit_score < MIN_SCORE:
+            result["mensaje"] = f"Score {fit_score}/5 ({grado}) — ENVIO FORZADO. CV de {empresa_r} — {rol_r} adaptándose en background."
+        else:
+            result["mensaje"] = f"Score {fit_score}/5 ({grado}). CV adaptándose en background. Notificación para {empresa_r} — {rol_r} por Telegram."
         result["estado"]  = "en_proceso"
     else:
-        # Extraer empresa/rol usando el helper centralizado
-        empresa_d, rol_d = _get_empresa_rol(raw_analysis)
-
         notify_make({
-            "company": empresa_d, "role": rol_d, "score": fit_score, "grado": grado,
+            "company": empresa_r, "role": rol_r, "score": fit_score, "grado": grado,
             "perfil":  result["perfil"], "status": "descartado",
-            "mensaje": f"PDF NO GENERADO: Oferta descartada automáticamente por score bajo ({fit_score} < {MIN_SCORE})"
+            "mensaje": f"PDF NO GENERADO: Oferta de {empresa_r} — {rol_r} descartada por score bajo ({fit_score}/{MIN_SCORE}). Usa forzar=true si quieres enviar igualmente."
         })
-        result["mensaje"] = f"Score {fit_score}/5 ({grado}). Oferta descartada."
+        result["mensaje"] = f"Score {fit_score}/5 ({grado}). Oferta {empresa_r} — {rol_r} descartada."
         result["estado"]  = "descartado"
 
 

@@ -106,8 +106,6 @@ services:
       - "8011:8011"
     environment:
       <<: *common-env
-    volumes:
-      - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
     networks:
       - mayk-net
@@ -120,8 +118,6 @@ services:
       - "8012:8012"
     environment:
       <<: *common-env
-    volumes:
-      - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
     networks:
       - mayk-net
@@ -134,8 +130,6 @@ services:
       - "8013:8013"
     environment:
       <<: *common-env
-    volumes:
-      - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
     networks:
       - mayk-net
@@ -148,8 +142,6 @@ services:
       - "8014:8014"
     environment:
       <<: *common-env
-    volumes:
-      - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
     networks:
       - mayk-net
@@ -163,8 +155,6 @@ services:
     environment:
       <<: *common-env
       ORCHESTRATOR_URL: http://career-orchestrator:8020
-    volumes:
-      - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
     networks:
       - mayk-net
