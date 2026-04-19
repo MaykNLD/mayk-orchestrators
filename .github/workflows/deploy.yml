@@ -55,7 +55,6 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           ssh -o StrictHostKeyChecking=no mayk@${{ secrets.HOST_IP }} \
             GH_PAT="$GH_PAT" \
@@ -65,7 +64,6 @@ jobs:
             SUPABASE_SECRET_KEY="$SUPABASE_SECRET_KEY" \
             SUPABASE_KEY="$SUPABASE_KEY" \
             MAKE_WEBHOOK_URL="$MAKE_WEBHOOK_URL" \
-            GEMINI_API_KEY="$GEMINI_API_KEY" \
             bash -s << 'DEPLOY_SCRIPT'
           set -euo pipefail
           echo "=== Inicio del deploy en el servidor ==="
@@ -128,7 +126,6 @@ jobs:
           export SUPABASE_SECRET_KEY
           export SUPABASE_KEY
           export MAKE_WEBHOOK_URL
-          export GEMINI_API_KEY
 
           docker compose down --remove-orphans || true
           docker compose up -d --build --force-recreate --remove-orphans
