@@ -127,7 +127,8 @@ jobs:
           export SUPABASE_KEY
           export MAKE_WEBHOOK_URL
 
-          docker compose up -d --build --force-recreate
+          docker compose down --remove-orphans || true
+          docker compose up -d --build --force-recreate --remove-orphans
 
           echo "=== Deploy completado ==="
           docker compose ps

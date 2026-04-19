@@ -140,7 +140,7 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
         # Generar PDF directamente desde el CV adaptado del Sastre con Playwright
         pdf_url = None
         try:
-            import time
+            import uuid
             from pathlib import Path as _Path
             from generate_pdf import generate_pdf
 
@@ -148,16 +148,16 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             tmpl_name = "cv-template-en.html" if idioma == "EN" else "cv-template.html"
             tmpl_path = str(_Path(__file__).parent / "plantillas" / tmpl_name)
 
-            ts = int(time.time())
+            uid = uuid.uuid4().hex[:8]
             perfil_id = perfil.get("id", "unknown")
             out_dir = _Path("/app/output")
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = str(out_dir / f"{perfil_id}_{ts}.pdf")
+            out_path = str(out_dir / f"{perfil_id}_{uid}.pdf")
 
             generate_pdf(cv_data, tmpl_path, out_path, idioma)
             
             # NUEVO: Subir a Supabase Storage para evitar exponer la URL local (Tailscale secure)
-            obj_path = f"{perfil_id}_{ts}.pdf"
+            obj_path = f"{perfil_id}_{uid}.pdf"
             with open(out_path, "rb") as f:
                 upload_res = upload_file_to_storage("pdfs", obj_path, f.read(), "application/pdf")
             
