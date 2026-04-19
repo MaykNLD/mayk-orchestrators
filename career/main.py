@@ -176,9 +176,20 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
         cv_data = {}
         raw_result = sastre_resp.get("result", "{}")
         try:
-            cv_data = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+            parsed = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+            # El Sastre envuelve el CV dentro de 'cv_adaptado_json'
+            cv_data = parsed.get("cv_adaptado_json", parsed)
         except Exception:
             cv_data = {"contenido": str(raw_result)}
+
+        # Enriquecer cv_data con datos personales del perfil para rellenar {{NOMBRE}} etc.
+        cv_data.setdefault("nombre",    f"{perfil.get('nombre', '')} {perfil.get('apellido', '')}".strip())
+        cv_data.setdefault("titular",   perfil.get("titular", perfil.get("titulo", "")))
+        cv_data.setdefault("email",     perfil.get("email", ""))
+        cv_data.setdefault("telefono",  perfil.get("telefono", ""))
+        cv_data.setdefault("ubicacion", perfil.get("ubicacion", perfil.get("ciudad", "")))
+        cv_data.setdefault("linkedin",  perfil.get("linkedin", ""))
+        cv_data.setdefault("portfolio", perfil.get("portfolio", perfil.get("github", "")))
 
         # Generar PDF directamente desde el CV adaptado del Sastre con Playwright
         pdf_url = None

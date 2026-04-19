@@ -44,12 +44,19 @@ def render_cv_html(cv_json: dict, template_path: str, idioma: str = "ES") -> str
         edu_html += f"<div><strong>{edu.get('titulo','')}</strong> — {edu.get('institucion','')} ({edu.get('año','')})</div>"
 
     filled = (tmpl
-        .replace("{{RESUMEN}}", cv_json.get("resumen", ""))
+        .replace("{{NOMBRE}}",    cv_json.get("nombre", ""))
+        .replace("{{TITULAR}}",   cv_json.get("titular", ""))
+        .replace("{{EMAIL}}",     cv_json.get("email", ""))
+        .replace("{{TELEFONO}}",  cv_json.get("telefono", ""))
+        .replace("{{UBICACION}}", cv_json.get("ubicacion", ""))
+        .replace("{{LINKEDIN}}",  cv_json.get("linkedin", ""))
+        .replace("{{PORTFOLIO}}", cv_json.get("portfolio", ""))
+        .replace("{{RESUMEN}}",   cv_json.get("resumen", ""))
         .replace("{{EXPERIENCIA}}", exp_html)
         .replace("{{PROYECTOS}}", proj_html)
-        .replace("{{SKILLS}}", skills_html)
+        .replace("{{SKILLS}}",    skills_html)
         .replace("{{EDUCACION}}", edu_html)
-        .replace("{{FECHA}}", datetime.now().strftime("%Y-%m"))
+        .replace("{{FECHA}}",     datetime.now().strftime("%Y-%m"))
     )
     return filled
 
