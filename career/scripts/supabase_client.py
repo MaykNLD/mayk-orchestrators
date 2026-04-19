@@ -137,3 +137,20 @@ def upload_file_to_storage(bucket: str, path: str, file_bytes: bytes, content_ty
 def get_storage_public_url(bucket: str, path: str) -> str:
     """Devuelve la URL publica de un archivo en Supabase Storage"""
     return f"{SUPABASE_URL}/storage/v1/object/public/{bucket}/{path}"
+
+
+def log_error(context: str, error: str, app_id: Optional[str] = None, extra: Optional[dict] = None) -> dict:
+    """Persiste un error critico del pipeline en Supabase (tabla career_errores).
+    No lanza excepciones — si falla el log, no debe romper el flujo principal.
+    """
+    try:
+        data = {
+            "context":  context,
+            "error":    error[:2000],  # truncar para evitar payloads gigantes
+            "app_id":   app_id,
+            "extra":    extra or {},
+        }
+        return _post("career_errores", data)
+    except Exception as e:
+        print(f"[supabase_client] No se pudo loguear error en Supabase: {e}")
+        return {}

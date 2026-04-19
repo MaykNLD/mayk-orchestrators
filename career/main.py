@@ -20,7 +20,7 @@ from supabase_client import (
     list_perfiles, get_perfil_by_id, get_first_perfil,
     create_perfil, get_pending_applications, create_application, update_application,
     upload_file_to_storage, get_storage_public_url,
-    get_all_applications, get_applications_by_perfil, log_ejecucion
+    get_all_applications, get_applications_by_perfil, log_ejecucion, log_error
 )
 
 # URLs de los agentes (inyectadas desde docker-compose / entorno)
@@ -32,6 +32,31 @@ MAKE_WEBHOOK  = os.environ.get("MAKE_WEBHOOK_URL", "")
 MIN_SCORE     = float(os.environ.get("CAREER_MIN_SCORE", "3.0"))
 
 app = FastAPI(title="Career-Ops Orchestrator", version="2.0.0")
+
+
+# ── Helper: extrae empresa y rol de cualquier dict (eval_resp o raw_analysis) ──
+def _get_empresa_rol(source: dict) -> tuple:
+    """Lee empresa/rol desde los campos raíz del dict (como ahora devuelve el evaluador).
+    Si no existen en raíz, intenta extraerlos de bloque_a con regex.
+    Nunca lanza excepciones.
+    """
+    import re as _re
+    empresa = (source.get("empresa") or "").strip()
+    rol     = (source.get("rol")     or "").strip()
+    if empresa and rol:
+        return empresa, rol
+    bloque_a = source.get("bloque_a", "")
+    if isinstance(bloque_a, dict):
+        empresa = empresa or (bloque_a.get("empresa") or bloque_a.get("company") or "").strip()
+        rol     = rol     or (bloque_a.get("rol")     or bloque_a.get("role")    or "").strip()
+    elif isinstance(bloque_a, str) and len(bloque_a) > 5:
+        tab_e = _re.search(r"\|\s*(?:empresa|company)\s*\|\s*([^|\n]+)", bloque_a, _re.IGNORECASE)
+        tab_r = _re.search(r"\|\s*(?:rol|role|posici[oó]n|puesto)\s*\|\s*([^|\n]+)", bloque_a, _re.IGNORECASE)
+        kv_e  = _re.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re.IGNORECASE)
+        kv_r  = _re.search(r"(?:rol|role|posici[oó]n|puesto)[:\s]+([^\n|]+)", bloque_a, _re.IGNORECASE)
+        empresa = empresa or (tab_e.group(1).strip() if tab_e else (kv_e.group(1).strip() if kv_e else ""))
+        rol     = rol     or (tab_r.group(1).strip() if tab_r else (kv_r.group(1).strip() if kv_r else ""))
+    return empresa or "Desconocida", rol or "No especificado"
 
 
 # ── Modelos ──────────────────────────────────────────────────────────
@@ -158,20 +183,8 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "status":           "cv_generado",
         })
 
-        # Extraer empresa y rol
-        empresa, rol = raw_analysis.get("empresa", "Desconocida"), raw_analysis.get("rol", "No especificado")
-        if empresa == "Desconocida" or rol == "No especificado":
-            bloque_a = raw_analysis.get("bloque_a", "")
-            if isinstance(bloque_a, dict):
-                empresa = bloque_a.get("empresa", empresa)
-                rol     = bloque_a.get("rol", rol)
-            elif isinstance(bloque_a, str) and len(bloque_a) > 5:
-                import re as _re2
-                empresa_m = _re2.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re2.IGNORECASE)
-                rol_m     = _re2.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", bloque_a, _re2.IGNORECASE)
-                empresa   = empresa_m.group(1).strip() if empresa_m else empresa
-                rol       = rol_m.group(1).strip() if rol_m else rol
-
+        # Extraer empresa y rol desde raw_analysis (campos raíz primero)
+        empresa, rol = _get_empresa_rol(raw_analysis)
         fit_sc = raw_analysis.get("fit_score", 0.0)
         grado  = raw_analysis.get("grado", "?")
 
@@ -187,9 +200,20 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
         })
 
     except Exception as e:
-        print(f"[orchestrator] Error en sastre background: {e}")
+        error_msg = str(e)
+        print(f"[orchestrator] ERROR CRITICO en sastre background: {error_msg}")
         if app_id:
-            update_application(app_id, {"status": "error_sastre", "notas": str(e)})
+            update_application(app_id, {"status": "error_sastre", "notas": error_msg})
+            log_error("run_sastre_background", error_msg, app_id=app_id)
+        # SIEMPRE notificar a Telegram — nunca dejar al usuario sin respuesta
+        notify_make({
+            "company": raw_analysis.get("empresa", "Desconocida") if raw_analysis else "Desconocida",
+            "role":    raw_analysis.get("rol",     "?")           if raw_analysis else "?",
+            "score":   raw_analysis.get("fit_score", 0.0)         if raw_analysis else 0.0,
+            "grado":   raw_analysis.get("grado",    "?")          if raw_analysis else "?",
+            "status":  "error_critico",
+            "mensaje": f"ERROR en generacion de CV adaptado: {error_msg[:300]}",
+        })
 
 
 # ── Background para flujo analizar-perfil ────────────────────────────
@@ -353,6 +377,12 @@ def evaluar(req: EvaluarRequest):
 
         raw_analysis["fit_score"] = fit_score
         raw_analysis["grado"]     = grado
+        # Propagar empresa/rol desde el evaluador directamente al raw_analysis
+        # (el evaluador ya los extrae como campos raíz en su response)
+        if eval_resp.get("empresa") and eval_resp["empresa"] != "Desconocida":
+            raw_analysis["empresa"] = eval_resp["empresa"]
+        if eval_resp.get("rol") and eval_resp["rol"] != "No especificado":
+            raw_analysis["rol"] = eval_resp["rol"]
 
         if app_id:
             update_application(app_id, {
@@ -365,6 +395,7 @@ def evaluar(req: EvaluarRequest):
     except Exception as e:
         if app_id:
             update_application(app_id, {"status": "error_evaluador", "notas": str(e)})
+            log_error("evaluar_endpoint", str(e), app_id=app_id)
         notify_make({
             "perfil": f"{perfil.get('nombre', '')} {perfil.get('apellido', '')}",
             "status": "error_ia",
@@ -372,7 +403,7 @@ def evaluar(req: EvaluarRequest):
             "role": "?",
             "score": 0.0,
             "grado": "F",
-            "mensaje": f"El Evaluador IA colapsó al revisar la oferta: {str(e)}"
+            "mensaje": f"El Evaluador IA colapso al revisar la oferta: {str(e)}"
         })
         raise HTTPException(500, f"Error en agente evaluador: {e}")
 
@@ -396,19 +427,8 @@ def evaluar(req: EvaluarRequest):
         result["mensaje"] = f"Score {fit_score}/5 ({grado}). CV adaptándose en background. Notificación por Telegram."
         result["estado"]  = "en_proceso"
     else:
-        # Extraer empresa/rol para notificar el descarte
-        empresa_d, rol_d = raw_analysis.get("empresa", "Desconocida"), raw_analysis.get("rol", "No especificado")
-        if empresa_d == "Desconocida" or rol_d == "No especificado":
-            bloque_a = raw_analysis.get("bloque_a", "")
-            if isinstance(bloque_a, dict):
-                empresa_d = bloque_a.get("empresa", empresa_d)
-                rol_d     = bloque_a.get("rol", rol_d)
-            elif isinstance(bloque_a, str) and len(bloque_a) > 5:
-                import re as _re3
-                e_m = _re3.search(r"(?:empresa|company)[:\s]+([^\n|]+)", bloque_a, _re3.IGNORECASE)
-                r_m = _re3.search(r"(?:rol|role|posici.n)[:\s]+([^\n|]+)", bloque_a, _re3.IGNORECASE)
-                empresa_d = e_m.group(1).strip() if e_m else empresa_d
-                rol_d     = r_m.group(1).strip() if r_m else rol_d
+        # Extraer empresa/rol usando el helper centralizado
+        empresa_d, rol_d = _get_empresa_rol(raw_analysis)
 
         notify_make({
             "company": empresa_d, "role": rol_d, "score": fit_score, "grado": grado,

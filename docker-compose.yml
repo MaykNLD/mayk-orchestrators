@@ -11,8 +11,9 @@ networks:
 x-common-env: &common-env
   OPENROUTER_API_KEY:  ${OPENROUTER_API_KEY}
   SUPABASE_URL:        ${SUPABASE_URL}
-  SUPABASE_ANON_KEY:   ${SUPABASE_ANON_KEY}
-  SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+  SUPABASE_KEY:        ${SUPABASE_KEY}
+  SUPABASE_ANON_KEY:   ${SUPABASE_ANON_KEY:-}
+  SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
   MAKE_WEBHOOK_URL:    ${MAKE_WEBHOOK_URL}
 
 services:
@@ -104,9 +105,7 @@ services:
     ports:
       - "8011:8011"
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+      <<: *common-env
     volumes:
       - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
@@ -120,9 +119,7 @@ services:
     ports:
       - "8012:8012"
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+      <<: *common-env
     volumes:
       - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
@@ -136,9 +133,7 @@ services:
     ports:
       - "8013:8013"
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+      <<: *common-env
     volumes:
       - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
@@ -152,9 +147,7 @@ services:
     ports:
       - "8014:8014"
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
+      <<: *common-env
     volumes:
       - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
@@ -168,9 +161,8 @@ services:
     ports:
       - "8015:8015"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
-      - ORCHESTRATOR_URL=http://career-orchestrator:8020
+      <<: *common-env
+      ORCHESTRATOR_URL: http://career-orchestrator:8020
     volumes:
       - ../mayk-agents/shared:/app/shared:ro
     restart: unless-stopped
@@ -184,15 +176,12 @@ services:
     ports:
       - "8020:8020"
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_SECRET_KEY:-${SUPABASE_KEY}}
-      - MAKE_WEBHOOK_URL=${MAKE_WEBHOOK_URL}
-      - AGENTE_HR_EVALUADOR_URL=http://agente-hr-evaluador:8011
-      - AGENTE_HR_SASTRE_URL=http://agente-hr-sastre:8012
-      - AGENTE_HR_RRHH_URL=http://agente-hr-rrhh:8013
-      - AGENTE_HR_DISENO_URL=http://agente-hr-diseno:8014
-      - CAREER_MIN_SCORE=3.0
+      <<: *common-env
+      AGENTE_HR_EVALUADOR_URL: http://agente-hr-evaluador:8011
+      AGENTE_HR_SASTRE_URL:    http://agente-hr-sastre:8012
+      AGENTE_HR_RRHH_URL:      http://agente-hr-rrhh:8013
+      AGENTE_HR_DISENO_URL:    http://agente-hr-diseno:8014
+      CAREER_MIN_SCORE:        "3.0"
     depends_on:
       - agente-hr-evaluador
       - agente-hr-sastre

@@ -136,6 +136,9 @@ jobs:
       # 7. Health check
       - name: Health check
         run: |
-          echo "Esperando 15s para que arranquen los contenedores..."
-          sleep 15
+          echo "Esperando 20s para que arranquen los contenedores..."
+          sleep 20
+          echo "--- Verificando orquestador principal (8000) ---"
           curl -f --retry 3 --retry-delay 5 http://${{ secrets.HOST_IP }}:8000/health && echo "ORQUESTADOR OK"
+          echo "--- Verificando career-orchestrator (8020) ---"
+          curl -f --retry 3 --retry-delay 5 http://${{ secrets.HOST_IP }}:8020/health && echo "CAREER-ORCHESTRATOR OK"
