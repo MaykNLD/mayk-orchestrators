@@ -161,7 +161,7 @@ def _agent_health(name: str, url: str) -> str:
 
 
 # ── Sastre en background (no bloquea respuesta al usuario) ───────────
-def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma: str):
+def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma: str, forzar: bool = False):
     try:
         cv_base_dict = {"cv_markdown": perfil.get("cv_markdown")} if perfil.get("cv_markdown") else perfil.get("datos_json", {})
         
@@ -170,6 +170,7 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "analisis_evaluador_json": raw_analysis,
             "idioma":                  idioma,
             "mercado_geografico":      perfil.get("mercado", "ES"),
+            "forzar":                  forzar
         }, timeout=200)
 
         cv_data = {}
@@ -473,7 +474,7 @@ def evaluar(req: EvaluarRequest):
     if fit_score >= MIN_SCORE or req.forzar:
         t = threading.Thread(
             target=run_sastre_background,
-            args=(app_id, perfil, raw_analysis, req.idioma),
+            args=(app_id, perfil, raw_analysis, req.idioma, req.forzar),
             daemon=True
         )
         t.start()
