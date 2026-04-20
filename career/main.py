@@ -350,22 +350,15 @@ def run_diseno_background(perfil_id: str, version_id: Optional[str],
             "idioma":       idioma,
         }, timeout=240)
 
-        pdf_url  = diseno_resp.get("pdf_url")
-        advertencias = diseno_resp.get("advertencias", [])
-
-        notify_make({
-            "perfil":     perfil_nombre,
-            "status":     "cv_listo",
-            "pdf_url":    pdf_url or "pendiente",
-            "advertencias": "; ".join(advertencias) if advertencias else "Ninguna",
-            "mensaje":    f"CV generado para {perfil_nombre}. PDF (24h): {pdf_url or 'pendiente'}",
-        })
+        # Exito: no se notifica por Telegram, el usuario ya ve el resultado en la CLI
+        print(f"[orchestrator] Diseno completado para {perfil_nombre}. PDF: {pdf_url or 'sin PDF'}")
     except Exception as e:
-        print(f"[orchestrator] Error en diseño background: {e}")
+        print(f"[orchestrator] Error en diseno background: {e}")
         notify_make({
-            "perfil":  perfil_nombre,
-            "status":  "error_diseno",
-            "mensaje": f"Error generando diseño del CV: {str(e)}",
+            "candidato": perfil_nombre,
+            "perfil":    perfil_nombre,
+            "status":    "error_diseno",
+            "mensaje":   f"[{perfil_nombre}] Error al generar el diseno del CV: {str(e)}",
         })
 
 
@@ -602,10 +595,16 @@ def evaluar(req: EvaluarRequest):
             result["mensaje"] = f"Score {fit_score}/5 ({grado}). CV adaptándose en background. Notificación para {empresa_r} — {rol_r} por Telegram."
         result["estado"]  = "en_proceso"
     else:
+        candidato_nombre = result["perfil"]
         notify_make({
-            "company": empresa_r, "role": rol_r, "score": fit_score, "grado": grado,
-            "perfil":  result["perfil"], "status": "descartado",
-            "mensaje": f"PDF NO GENERADO: Oferta de {empresa_r} — {rol_r} descartada por score bajo ({fit_score}/{MIN_SCORE}). Usa forzar=true si quieres enviar igualmente."
+            "candidato": candidato_nombre,
+            "company":   empresa_r,
+            "role":      rol_r,
+            "score":     fit_score,
+            "grado":     grado,
+            "perfil":    candidato_nombre,
+            "status":    "descartado",
+            "mensaje":   f"[{candidato_nombre}] Oferta de {empresa_r} — {rol_r} descartada por score bajo ({fit_score}/{MIN_SCORE})."
         })
         result["mensaje"] = f"Score {fit_score}/5 ({grado}). Oferta {empresa_r} — {rol_r} descartada."
         result["estado"]  = "descartado"
