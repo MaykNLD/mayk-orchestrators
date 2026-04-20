@@ -209,7 +209,7 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
         try:
             import uuid
             from pathlib import Path as _Path
-            from generate_pdf import generate_pdf
+            from scripts.generate_pdf import generate_pdf
 
             # Seleccionar template segun idioma
             tmpl_name = "cv-template-en.html" if idioma == "EN" else "cv-template.html"
@@ -256,7 +256,8 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
                 print(f"[orchestrator] Error crítico subiendo PDF a Supabase Storage.")
                 
         except Exception as e:
-            print(f"[orchestrator] Error generando/subiendo PDF: {e}")
+            import traceback
+            print(f"[orchestrator] Error fatal generando/subiendo PDF:\n{traceback.format_exc()}")
             # Ensure cleanup on crash
             if 'out_path' in locals():
                 try:
