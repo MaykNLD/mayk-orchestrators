@@ -66,6 +66,21 @@ def get_first_perfil() -> Optional[dict]:
 def create_perfil(data: dict) -> dict:
     return _post("perfil_base", data)
 
+def update_perfil(perfil_id: str, data: dict) -> dict:
+    """Actualiza campos del perfil base (nombre, email, cv_markdown, etc.)"""
+    return _patch("perfil_base", "id", perfil_id, data)
+
+def delete_perfil(perfil_id: str) -> bool:
+    """Elimina un perfil de la tabla perfil_base. Devuelve True si tuvo exito."""
+    url = f"{SUPABASE_URL}/rest/v1/perfil_base?id=eq.{perfil_id}"
+    req = urllib.request.Request(url, headers=_headers(), method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status in [200, 204]
+    except Exception as e:
+        print(f"[supabase_client] Error eliminando perfil {perfil_id}: {e}")
+        return False
+
 # ─── APLICACIONES ────────────────────────────────────────────────
 
 def create_application(data: dict) -> dict:

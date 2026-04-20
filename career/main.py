@@ -307,15 +307,17 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
         fit_sc = raw_analysis.get("fit_score", 0.0)
         grado  = raw_analysis.get("grado", "?")
 
+        nombre_candidato = f"{perfil.get('nombre','')} {perfil.get('apellido','')}".strip()
         notify_make({
+            "candidato": nombre_candidato,
             "company": empresa,
             "role":    rol,
             "score":   fit_sc,
             "grado":   grado,
-            "perfil":  f"{perfil.get('nombre','')} {perfil.get('apellido','')}",
+            "perfil":  nombre_candidato,
             "status":  "cv_generado",
             "pdf_url": pdf_url or "pendiente",
-            "mensaje": f"CV adaptado generado para {empresa} — {rol}. Score {fit_sc}/5 ({grado}). PDF: {pdf_url or 'pendiente (error al generar)'}" ,
+            "mensaje": f"[{nombre_candidato}] CV adaptado generado para {empresa} — {rol}. Score {fit_sc}/5 ({grado}). PDF: {pdf_url or 'pendiente (error al generar)'}" ,
         })
 
     except Exception as e:
@@ -388,6 +390,34 @@ def health():
 def listar_perfiles():
     perfiles = list_perfiles()
     return {"total": len(perfiles), "perfiles": perfiles}
+
+class PerfilCreateRequest(BaseModel):
+    nombre: str = "Nuevo"
+    apellido: str = "Candidato"
+    email: str = "nuevo@candidato.com"
+
+@app.post("/career/perfiles")
+def crear_nuevo_perfil(req_data: PerfilCreateRequest):
+    resultado = create_perfil({
+        "nombre": req_data.nombre,
+        "apellido": req_data.apellido,
+        "email": req_data.email
+    })
+    # create_perfil puede devolver el objeto completo o solo el id
+    if isinstance(resultado, dict):
+        perfil_id = resultado.get("id", str(resultado))
+    else:
+        perfil_id = str(resultado)
+    return {"status": "ok", "id": perfil_id}
+
+
+@app.delete("/career/perfiles/{perfil_id}")
+def eliminar_perfil(perfil_id: str):
+    from scripts.supabase_client import delete_perfil
+    ok = delete_perfil(perfil_id)
+    if not ok:
+        raise HTTPException(404, f"Perfil {perfil_id} no encontrado o no se pudo eliminar")
+    return {"status": "ok", "eliminado": perfil_id}
 
 
 @app.post("/career/analizar-perfil")
@@ -465,8 +495,15 @@ def evaluar(req: EvaluarRequest):
     if not perfil:
         raise HTTPException(404, "Perfil no encontrado en Supabase.")
 
+    # BUG 2 GUARD: Bloquear evaluacion si el candidato no tiene CV cargado
+    cv_markdown = perfil.get("cv_markdown") or ""
+    datos_json = perfil.get("datos_json") or {}
+    if not cv_markdown.strip() and not datos_json:
+        nombre_c = f"{perfil.get('nombre','')} {perfil.get('apellido','')}".strip()
+        raise HTTPException(400, f"El candidato '{nombre_c}' no tiene CV cargado. Ve a la Opcion 1 (Subir CV) primero.")
+
     # Usar cv_markdown si existe, fallback a datos_json (retrocompatibilidad)
-    cv_base_dict = {"cv_markdown": perfil.get("cv_markdown")} if perfil.get("cv_markdown") else perfil.get("datos_json", {})
+    cv_base_dict = {"cv_markdown": cv_markdown} if cv_markdown else datos_json
 
     empresa_inicial, rol_inicial = _get_empresa_rol({})
     app_record = create_application({
