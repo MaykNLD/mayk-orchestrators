@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Tiempo que el backend estará encendido (horas)'
+        description: 'Tiempo activo (horas)'
         required: true
         default: '2'
         type: choice
@@ -17,19 +17,23 @@ on:
 jobs:
   run-backend-serverless:
     runs-on: ubuntu-latest
+
     steps:
-      - name: 📥 Clonar repositorio Orchestrators
+      # ── 1. Checkout orquestadores ─────────────────────────────────
+      - name: 📥 Clonar mayk-orchestrators
         uses: actions/checkout@v4
         with:
           path: mayk-orchestrators
 
-      - name: 📥 Clonar repositorio Agents
+      # ── 2. Checkout agentes (usa GH_PAT igual que deploy.yml) ────
+      - name: 📥 Clonar mayk-agents
         uses: actions/checkout@v4
         with:
           repository: MaykNLD/mayk-agents
-          token: ${{ secrets.PAT_TOKEN || github.token }}
+          token: ${{ secrets.GH_PAT }}
           path: mayk-agents
 
+      # ── 3. Tailscale ──────────────────────────────────────────────
       - name: 🔐 Conectar a Tailscale
         uses: tailscale/github-action@v2
         with:
@@ -37,30 +41,64 @@ jobs:
           hostname: "mayk-backend"
           version: "latest"
 
-      - name: 🐳 Iniciar Docker Compose (Inyectando Secrets)
+      # ── 4. Preparar carpeta shared en cada agente ─────────────────
+      #       (mismo patrón que el script de deploy en deploy.yml)
+      - name: 🛠️ Preparar shared en agentes
+        working-directory: ./mayk-agents
+        run: |
+          echo ">>> Copiando shared en cada agente..."
+          for d in agente-*/; do
+            rm -rf "${d}shared"
+            cp -r shared "${d}shared"
+            # Parchear Dockerfile si referencia ../shared
+            if grep -q '\.\./shared' "${d}Dockerfile" 2>/dev/null; then
+              sed -i 's|\.\./shared|shared|g' "${d}Dockerfile"
+              echo "  Parcheado: ${d}Dockerfile"
+            fi
+          done
+          echo ">>> shared OK"
+
+      # ── 5. Build + arrancar contenedores ─────────────────────────
+      - name: 🐳 Docker Compose up (con Secrets)
         working-directory: ./mayk-orchestrators
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
+          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:        ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_ANON_KEY:   ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          MAKE_WEBHOOK_URL:    ${{ secrets.MAKE_WEBHOOK_URL }}
         run: |
-          docker compose -f docker-compose.career.yml up -d
+          docker compose -f docker-compose.career.yml up -d --build --remove-orphans
+          echo "=== Estado de contenedores ==="
+          docker compose -f docker-compose.career.yml ps
 
-      - name: 🌐 Servidor Online
+      # ── 6. Health check ──────────────────────────────────────────
+      - name: 🩺 Health check career-orchestrator
+        run: |
+          echo "Esperando 40s a que levanten los contenedores..."
+          sleep 40
+          curl -sf http://localhost:8020/health \
+            && echo "✅ career-orchestrator OK" \
+            || echo "⚠️  career-orchestrator aún arrancando (normal en cold start)"
+
+      # ── 7. Anunciar IP de Tailscale ───────────────────────────────
+      - name: 🌐 Backend operativo
         run: |
           echo "========================================================="
-          echo "🚀 BACKEND CAREER-OPS ESTÁ OPERATIVO 🚀"
-          echo "El servidor estará activo durante ${{ github.event.inputs.duration }} horas."
-          echo "IP Privada de Tailscale:"
+          echo "🚀 CAREER-OPS BACKEND ESTÁ OPERATIVO 🚀"
+          echo "Activo durante ${{ github.event.inputs.duration }} horas."
+          echo ""
+          echo "IP Tailscale (úsala en mayk-cli.py si hace falta):"
           tailscale ip -4
           echo ""
-          echo "Ya puedes ejecutar el CLI 'mayk-cli.py' en cualquier PC."
+          echo "Ejecuta mayk-cli.py en cualquier PC con Tailscale activo."
+          echo "Para apagar antes: cancela este workflow desde GitHub."
           echo "========================================================="
 
-      - name: ⏳ Mantener Servidor Vivo (Timeout)
+      # ── 8. Mantener servidor vivo ─────────────────────────────────
+      - name: ⏳ Mantener vivo
         run: |
-          echo "El servidor se apagará automáticamente cuando termine el tiempo."
-          echo "Si terminas de usarlo antes, pulsa 'Cancel workflow' arriba a la derecha."
-          sleep $((${{ github.event.inputs.duration }} * 3600))
+          HOURS=${{ github.event.inputs.duration }}
+          echo "Servidor activo. Se apagará en ${HOURS}h."
+          sleep $((HOURS * 3600))
