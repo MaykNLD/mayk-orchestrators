@@ -149,7 +149,8 @@ def log_ejecucion(data: dict) -> dict:
 
 def upload_file_to_storage(bucket: str, path: str, file_bytes: bytes, content_type: str = "application/pdf") -> bool:
     """Sube un archivo binario a un bucket de Supabase."""
-    url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{path}"
+    safe_path = urllib.parse.quote(path)
+    url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{safe_path}"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -172,7 +173,8 @@ def upload_file_to_storage(bucket: str, path: str, file_bytes: bytes, content_ty
 
 def get_storage_signed_url(bucket: str, path: str, expires_in: int = 1800) -> str:
     """Solicita una URL firmada de un bucket cerrado que expira en X segundos."""
-    url = f"{SUPABASE_URL}/storage/v1/object/sign/{bucket}/{path}"
+    safe_path = urllib.parse.quote(path)
+    url = f"{SUPABASE_URL}/storage/v1/object/sign/{bucket}/{safe_path}"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -194,7 +196,8 @@ def get_storage_signed_url(bucket: str, path: str, expires_in: int = 1800) -> st
 
 def delete_storage_file(bucket: str, path: str) -> bool:
     """Elimina físicamente un archivo de storage (ej. para limpiar residuos tras el envío)"""
-    url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{path}"
+    safe_path = urllib.parse.quote(path)
+    url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{safe_path}"
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}"
