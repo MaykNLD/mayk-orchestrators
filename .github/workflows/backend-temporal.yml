@@ -37,6 +37,17 @@ jobs:
           hostname: "mayk-backend"
           version: "latest"
 
+      - name: 🛠️ Preparar carpeta shared en Agentes
+        working-directory: ./mayk-agents
+        run: |
+          for d in agente-*/; do
+            rm -rf "${d}shared"
+            cp -r shared "${d}shared"
+            if grep -q '\.\./shared' "${d}Dockerfile" 2>/dev/null; then
+              sed -i 's|\.\./shared|shared|g' "${d}Dockerfile"
+            fi
+          done
+
       - name: 🐳 Iniciar Docker Compose (Inyectando Secrets)
         working-directory: ./mayk-orchestrators
         env:
