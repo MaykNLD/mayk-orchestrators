@@ -131,15 +131,19 @@ def notify_make(payload: dict):
     if not MAKE_WEBHOOK:
         return
     
-    # ── SANITIZACIÓN PARA TELEGRAM MARKDOWN ──
-    # Telegram Markdown falla (Bad Request) si hay '_' o '*' sin cerrar en los valores.
-    # Reemplazamos '_' con espacio en 'status' y sanitizamos el mensaje general.
-    if "status" in payload and isinstance(payload["status"], str):
-        payload["status"] = payload["status"].replace("_", " ")
+    # ── SANITIZACIÓN PARA TELEGRAM MARKDOWN V2 ──
+    # Telegram MarkdownV2 falla severamente (HTTP 400 Bad Request) si detecta caracteres
+    # especiales sin escapar en CUALQUIER campo de texto (. - ! etc).
+    import re
+    escape_chars = r'([_*\[\]()~`>#+\-=|{}.!])'
     
-    if "mensaje" in payload and isinstance(payload["mensaje"], str):
-        import re
-        payload["mensaje"] = re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', payload["mensaje"])
+    for key, val in payload.items():
+        if isinstance(val, str) and key != "pdf_url":
+            # Reemplazar '_' por espacio en el status para que sea legible
+            if key == "status":
+                val = val.replace("_", " ")
+            payload[key] = re.sub(escape_chars, r'\\\1', val)
+            
         
     try:
         data = json.dumps(payload).encode()
@@ -505,8 +509,11 @@ def evaluar(req: EvaluarRequest):
     if not req.url_oferta and not req.texto_oferta:
         raise HTTPException(400, "Proporciona url_oferta o texto_oferta")
 
-    # Resolver perfil
-    perfil = get_perfil_by_id(req.perfil_id) if req.perfil_id else get_first_perfil()
+    # Obligar a enviar perfil_id para evitar cruce de datos
+    if not req.perfil_id:
+        raise HTTPException(400, "perfil_id es obligatorio. No se puede evaluar sin un perfil de candidato específico.")
+        
+    perfil = get_perfil_by_id(req.perfil_id)
     if not perfil:
         raise HTTPException(404, "Perfil no encontrado en Supabase.")
 
@@ -528,21 +535,6 @@ def evaluar(req: EvaluarRequest):
         ext_app = get_application_by_url(perfil["id"], req.url_oferta)
         if ext_app:
             app_id = ext_app["id"]
-            update_application(app_id, {
-                "status": "evaluando",
-                "job_title": "Re-evaluando",
-                "company": "Fase 2"
-            })
-    
-    if not app_id:
-        app_record = create_application({
-            "perfil_id": perfil["id"],
-            "job_title": "Pendiente de evaluacion",
-            "company":   "Pendiente",
-            "url":       req.url_oferta or "",
-            "status":    "evaluando",
-        })
-        app_id = app_record.get("id")
 
     # ── Scraping previo: si hay URL y no hay texto_oferta, leer la web ──
     texto_oferta = req.texto_oferta or ""
@@ -554,7 +546,7 @@ def evaluar(req: EvaluarRequest):
         else:
             print(f"[orchestrator] Scraping vacío, se pasa la URL directamente al LLM")
 
-    # Llamar al evaluador
+    # Llamar al evaluador ANTES de guardar en base de datos para no generar basura
     try:
         eval_resp = call_agent(EVALUADOR_URL, "/execute", {
             "url_oferta":       req.url_oferta or "",
@@ -580,9 +572,20 @@ def evaluar(req: EvaluarRequest):
         if eval_resp.get("rol") and eval_resp["rol"] != "No especificado":
             raw_analysis["rol"] = eval_resp["rol"]
 
+        # Solo ahora (si el evaluador no falló) creamos o actualizamos la aplicación en la BD
+        empresa_eval, rol_eval = _get_empresa_rol(raw_analysis)
+        
+        if not app_id:
+            app_record = create_application({
+                "perfil_id": perfil["id"],
+                "job_title": rol_eval if rol_eval not in ("?", "No especificado", "") else "Oferta",
+                "company":   empresa_eval if empresa_eval not in ("?", "Desconocida", "") else "Pendiente",
+                "url":       req.url_oferta or "",
+                "status":    "en_proceso" if fit_score >= MIN_SCORE else "descartado",
+            })
+            app_id = app_record.get("id")
+
         if app_id:
-            # Guardar empresa y rol en la BD tan pronto el evaluador los extrae
-            empresa_eval, rol_eval = _get_empresa_rol(raw_analysis)
             update_application(app_id, {
                 "fit_score":    fit_score,
                 "grado":        grado,
