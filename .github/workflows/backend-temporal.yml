@@ -35,11 +35,10 @@ jobs:
 
       # ── 3. Tailscale ──────────────────────────────────────────────
       - name: 🔐 Conectar a Tailscale
-        uses: tailscale/github-action@v2
+        uses: tailscale/github-action@v3
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
           hostname: "mayk-backend"
-          version: "latest"
 
       # ── 4. Preparar carpeta shared en cada agente ─────────────────
       #       (mismo patrón que el script de deploy en deploy.yml)
