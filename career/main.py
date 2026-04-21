@@ -20,8 +20,8 @@ sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 from supabase_client import (
     list_perfiles, get_perfil_by_id, get_first_perfil,
     create_perfil, get_pending_applications, create_application, update_application,
-    upload_file_to_storage, get_storage_public_url,
-    get_all_applications, get_applications_by_perfil, get_application, log_ejecucion, log_error
+    upload_file_to_storage, get_storage_signed_url, delete_storage_file,
+    get_all_applications, get_applications_by_perfil, get_application_by_url, get_application, log_ejecucion, log_error
 )
 
 # URLs de los agentes (inyectadas desde docker-compose / entorno)
@@ -138,7 +138,8 @@ def notify_make(payload: dict):
         payload["status"] = payload["status"].replace("_", " ")
     
     if "mensaje" in payload and isinstance(payload["mensaje"], str):
-        payload["mensaje"] = payload["mensaje"].replace("_", "\\_").replace("*", "")
+        import re
+        payload["mensaje"] = re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', payload["mensaje"])
         
     try:
         data = json.dumps(payload).encode()
@@ -250,10 +251,21 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
                 pass
             
             if upload_res:
-                pdf_url = get_storage_public_url("pdfs", obj_path)
-                print(f"[orchestrator] PDF subido a Supabase de forma segura: {pdf_url}")
+                pdf_url = get_storage_signed_url("pdfs", obj_path, 3600)  # Firma magica de 1 hora
+                print(f"[orchestrator] PDF subido temporalmente a Supabase: {pdf_url}")
+
+                # Destructor programado: Eliminar archivo de Supabase Storage en 180s puro (Make tarda 2s en enviarlo a Tg)
+                def kill_residue():
+                    import time
+                    time.sleep(180)
+                    delete_storage_file("pdfs", obj_path)
+                    print(f"[orchestrator] Residuo eliminado del Storage: {obj_path}")
+
+                t_clean = threading.Thread(target=kill_residue, daemon=True)
+                t_clean.start()
+
             else:
-                print(f"[orchestrator] Error crítico subiendo PDF a Supabase Storage.")
+                print(f"[orchestrator] Error crítico subiendo PDF temporal a Supabase Storage.")
                 
         except Exception as e:
             import traceback
@@ -414,6 +426,15 @@ def eliminar_perfil(perfil_id: str):
     return {"status": "ok", "eliminado": perfil_id}
 
 
+@app.delete("/career/tracker/{app_id}")
+def eliminar_aplicacion(app_id: str):
+    from scripts.supabase_client import delete_application
+    ok = delete_application(app_id)
+    if not ok:
+        raise HTTPException(404, f"Aplicacion {app_id} no encontrada o no se pudo eliminar")
+    return {"status": "ok", "eliminado": app_id}
+
+
 @app.post("/career/analizar-perfil")
 def analizar_perfil(req: AnalizarPerfilRequest):
     """
@@ -500,14 +521,28 @@ def evaluar(req: EvaluarRequest):
     cv_base_dict = {"cv_markdown": cv_markdown} if cv_markdown else datos_json
 
     empresa_inicial, rol_inicial = _get_empresa_rol({})
-    app_record = create_application({
-        "perfil_id": perfil["id"],
-        "job_title": "Pendiente de evaluacion",
-        "company":   "Pendiente",
-        "url":       req.url_oferta or "",
-        "status":    "evaluando",
-    })
-    app_id = app_record.get("id")
+    
+    # ── Deduplicacion por URL ──
+    app_id = None
+    if req.url_oferta:
+        ext_app = get_application_by_url(perfil["id"], req.url_oferta)
+        if ext_app:
+            app_id = ext_app["id"]
+            update_application(app_id, {
+                "status": "evaluando",
+                "job_title": "Re-evaluando",
+                "company": "Fase 2"
+            })
+    
+    if not app_id:
+        app_record = create_application({
+            "perfil_id": perfil["id"],
+            "job_title": "Pendiente de evaluacion",
+            "company":   "Pendiente",
+            "url":       req.url_oferta or "",
+            "status":    "evaluando",
+        })
+        app_id = app_record.get("id")
 
     # ── Scraping previo: si hay URL y no hay texto_oferta, leer la web ──
     texto_oferta = req.texto_oferta or ""
@@ -572,17 +607,21 @@ def evaluar(req: EvaluarRequest):
         })
         raise HTTPException(500, f"Error en agente evaluador: {e}")
 
+    # Evaluar la empresa y rol antes de armar result
+    empresa_r, rol_r = _get_empresa_rol(raw_analysis)
+
     result = {
         "aplicacion_id": app_id,
         "perfil":        f"{perfil['nombre']} {perfil['apellido']}",
         "fit_score":     fit_score,
         "grado":         grado,
         "recomendacion": recomendacion,
+        "empresa":       empresa_r,
+        "rol":           rol_r,
         "bloques":       raw_analysis,
     }
 
     # Lanzar Sastre si score >= MIN_SCORE  ó  si el usuario forzó el envío
-    empresa_r, rol_r = _get_empresa_rol(raw_analysis)
     if fit_score >= MIN_SCORE or req.forzar:
         t = threading.Thread(
             target=run_sastre_background,
@@ -605,12 +644,13 @@ def evaluar(req: EvaluarRequest):
             "grado":     grado,
             "perfil":    candidato_nombre,
             "status":    "descartado",
-            "mensaje":   f"[{candidato_nombre}] Oferta de {empresa_r} — {rol_r} descartada por score bajo ({fit_score}/{MIN_SCORE})."
+            "pdf_url":   "N/A (Descartado por Score Bajo)",
+            "mensaje":   f"[{candidato_nombre}] Oferta de {empresa_r} — {rol_r} descartada por score bajo ({fit_score}/{MIN_SCORE}). El Agente Sastre no generará PDF automático."
         })
         result["mensaje"] = f"Score {fit_score}/5 ({grado}). Oferta {empresa_r} — {rol_r} descartada."
         result["estado"]  = "descartado"
 
-
+    print(f"[DEBUG_ORCHESTRATOR] Final result: {json.dumps(result, ensure_ascii=False)}")
     return result
 
 

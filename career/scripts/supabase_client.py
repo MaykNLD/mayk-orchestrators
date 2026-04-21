@@ -93,9 +93,26 @@ def get_application(app_id: str) -> dict:
     result = _get("aplicaciones_career", f"id=eq.{app_id}&limit=1")
     return result[0] if result else {}
 
+def delete_application(app_id: str) -> bool:
+    """Elimina una aplicacion (historial) de la base de datos."""
+    url = f"{SUPABASE_URL}/rest/v1/aplicaciones_career?id=eq.{app_id}"
+    req = urllib.request.Request(url, headers=_headers(), method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status in [200, 204]
+    except Exception as e:
+        print(f"[supabase_client] Error eliminando app {app_id}: {e}")
+        return False
+
 def get_applications_by_perfil(perfil_id: str, limit: int = 50) -> list:
     return _get("aplicaciones_career",
                 f"perfil_id=eq.{perfil_id}&order=created_at.desc&limit={limit}")
+
+def get_application_by_url(perfil_id: str, offer_url: str) -> Optional[dict]:
+    import urllib.parse
+    safe_url = urllib.parse.quote(offer_url, safe='')
+    result = _get("aplicaciones_career", f"perfil_id=eq.{perfil_id}&url=eq.{safe_url}&limit=1")
+    return result[0] if result else None
 
 def get_all_applications(limit: int = 50) -> list:
     return _get("aplicaciones_career", f"order=created_at.desc&limit={limit}")
@@ -153,9 +170,42 @@ def upload_file_to_storage(bucket: str, path: str, file_bytes: bytes, content_ty
             print(f"[supabase_client] Supabase Upsert Storage error: {e2}")
             return False
 
-def get_storage_public_url(bucket: str, path: str) -> str:
-    """Devuelve la URL publica de un archivo en Supabase Storage"""
-    return f"{SUPABASE_URL}/storage/v1/object/public/{bucket}/{path}"
+def get_storage_signed_url(bucket: str, path: str, expires_in: int = 1800) -> str:
+    """Solicita una URL firmada de un bucket cerrado que expira en X segundos."""
+    url = f"{SUPABASE_URL}/storage/v1/object/sign/{bucket}/{path}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json"
+    }
+    body = json.dumps({"expiresIn": expires_in}).encode()
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            
+            result = json.loads(r.read().decode())
+            signed_path = result.get("signedURL")
+            if signed_path:
+                return f"{SUPABASE_URL}{signed_path}"
+            return ""
+    except Exception as e:
+        print(f"[supabase_client] Error generando signed url: {e}")
+        return ""
+
+def delete_storage_file(bucket: str, path: str) -> bool:
+    """Elimina físicamente un archivo de storage (ej. para limpiar residuos tras el envío)"""
+    url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{path}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    req = urllib.request.Request(url, headers=headers, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status in [200, 204]
+    except Exception as e:
+        print(f"[supabase_client] Error eliminando archivo temp de storage: {e}")
+        return False
 
 
 def log_error(context: str, error: str, app_id: Optional[str] = None, extra: Optional[dict] = None) -> dict:
