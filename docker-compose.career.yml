@@ -1,0 +1,102 @@
+version: "3.9"
+
+networks:
+  career-net:
+    driver: bridge
+
+x-common-env: &common-env
+  OPENROUTER_API_KEY:  ${OPENROUTER_API_KEY}
+  SUPABASE_URL:        ${SUPABASE_URL}
+  SUPABASE_KEY:        ${SUPABASE_KEY}
+  SUPABASE_ANON_KEY:   ${SUPABASE_ANON_KEY:-}
+  SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
+  MAKE_WEBHOOK_URL:    ${MAKE_WEBHOOK_URL}
+
+services:
+
+  # ── Career-Ops Agents ────────────────────────────────────────────
+  agente-hr-evaluador:
+    build:
+      context: ../mayk-agents/agente-hr-evaluador
+      dockerfile: Dockerfile
+    ports:
+      - "8011:8011"
+    environment:
+      <<: *common-env
+    restart: unless-stopped
+    networks:
+      - career-net
+
+  agente-hr-sastre:
+    build:
+      context: ../mayk-agents/agente-hr-sastre
+      dockerfile: Dockerfile
+    ports:
+      - "8012:8012"
+    environment:
+      <<: *common-env
+    restart: unless-stopped
+    networks:
+      - career-net
+
+  agente-hr-rrhh:
+    build:
+      context: ../mayk-agents/agente-hr-rrhh
+      dockerfile: Dockerfile
+    ports:
+      - "8013:8013"
+    environment:
+      <<: *common-env
+    restart: unless-stopped
+    networks:
+      - career-net
+
+  agente-hr-diseno:
+    build:
+      context: ../mayk-agents/agente-hr-diseno
+      dockerfile: Dockerfile
+    ports:
+      - "8014:8014"
+    environment:
+      <<: *common-env
+    restart: unless-stopped
+    networks:
+      - career-net
+
+  agente-scanner:
+    build:
+      context: ../mayk-agents/agente-scanner
+      dockerfile: Dockerfile
+    ports:
+      - "8015:8015"
+    environment:
+      <<: *common-env
+      ORCHESTRATOR_URL: http://career-orchestrator:8020
+    restart: unless-stopped
+    networks:
+      - career-net
+
+  career-orchestrator:
+    build:
+      context: ./career
+      dockerfile: Dockerfile
+    ports:
+      - "8020:8020"
+    environment:
+      <<: *common-env
+      AGENTE_HR_EVALUADOR_URL: http://agente-hr-evaluador:8011
+      AGENTE_HR_SASTRE_URL:    http://agente-hr-sastre:8012
+      AGENTE_HR_RRHH_URL:      http://agente-hr-rrhh:8013
+      AGENTE_HR_DISENO_URL:    http://agente-hr-diseno:8014
+      CAREER_MIN_SCORE:        "3.0"
+    depends_on:
+      - agente-hr-evaluador
+      - agente-hr-sastre
+      - agente-hr-rrhh
+      - agente-hr-diseno
+    volumes:
+      - ./career/output:/app/output
+      - ./career/data:/app/data
+    restart: unless-stopped
+    networks:
+      - career-net

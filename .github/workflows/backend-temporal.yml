@@ -1,0 +1,66 @@
+name: "🚀 Backend Temporal (Career-Ops)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Tiempo que el backend estará encendido (horas)'
+        required: true
+        default: '2'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '4'
+          - '6'
+
+jobs:
+  run-backend-serverless:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Clonar repositorio Orchestrators
+        uses: actions/checkout@v4
+        with:
+          path: mayk-orchestrators
+
+      - name: 📥 Clonar repositorio Agents
+        uses: actions/checkout@v4
+        with:
+          repository: MaykNLD/mayk-agents
+          token: ${{ secrets.PAT_TOKEN || github.token }}
+          path: mayk-agents
+
+      - name: 🔐 Conectar a Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: "mayk-backend"
+          version: "latest"
+
+      - name: 🐳 Iniciar Docker Compose (Inyectando Secrets)
+        working-directory: ./mayk-orchestrators
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
+        run: |
+          docker compose -f docker-compose.career.yml up -d
+
+      - name: 🌐 Servidor Online
+        run: |
+          echo "========================================================="
+          echo "🚀 BACKEND CAREER-OPS ESTÁ OPERATIVO 🚀"
+          echo "El servidor estará activo durante ${{ github.event.inputs.duration }} horas."
+          echo "IP Privada de Tailscale:"
+          tailscale ip -4
+          echo ""
+          echo "Ya puedes ejecutar el CLI 'mayk-cli.py' en cualquier PC."
+          echo "========================================================="
+
+      - name: ⏳ Mantener Servidor Vivo (Timeout)
+        run: |
+          echo "El servidor se apagará automáticamente cuando termine el tiempo."
+          echo "Si terminas de usarlo antes, pulsa 'Cancel workflow' arriba a la derecha."
+          sleep $((${{ github.event.inputs.duration }} * 3600))
