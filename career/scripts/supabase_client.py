@@ -188,6 +188,10 @@ def get_storage_signed_url(bucket: str, path: str, expires_in: int = 1800) -> st
             result = json.loads(r.read().decode())
             signed_path = result.get("signedURL")
             if signed_path:
+                if not signed_path.startswith("/storage/v1"):
+                    if signed_path.startswith("/"):
+                        return f"{SUPABASE_URL}/storage/v1{signed_path}"
+                    return f"{SUPABASE_URL}/storage/v1/{signed_path}"
                 return f"{SUPABASE_URL}{signed_path}"
             return ""
     except Exception as e:
