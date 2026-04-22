@@ -263,10 +263,10 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
                 pdf_url = get_storage_signed_url("pdfs", obj_path, 3600)  # Firma magica de 1 hora
                 print(f"[orchestrator] PDF subido temporalmente a Supabase: {pdf_url}")
 
-                # Destructor programado: Eliminar archivo de Supabase Storage en 180s puro (Make tarda 2s en enviarlo a Tg)
+                # Destructor programado: Eliminar archivo de Supabase Storage en 3600s (1 hora)
                 def kill_residue():
                     import time
-                    time.sleep(180)
+                    time.sleep(3600)
                     delete_storage_file("pdfs", obj_path)
                     print(f"[orchestrator] Residuo eliminado del Storage: {obj_path}")
 
@@ -339,7 +339,7 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "perfil":  nombre_candidato,
             "status":  "cv_generado",
             "pdf_url": pdf_url or "pendiente",
-            "mensaje": f"[{nombre_candidato}] CV adaptado generado para {empresa} — {rol}. Score {fit_sc}/5 ({grado}). PDF: {pdf_url or 'pendiente (error al generar)'}" ,
+            "mensaje": f"[{nombre_candidato}] CV adaptado generado para {empresa} — {rol}. Score {fit_sc}/5 ({grado}).",
         })
 
     except Exception as e:
