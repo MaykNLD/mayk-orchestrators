@@ -1,9 +1,21 @@
 name: "🚀 Backend Temporal (Career-Ops)"
 
+concurrency:
+  group: backend-career-ops
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
     inputs:
+concurrency:
+  group: backend-career-ops
+  cancel-in-progress: true
+
       duration:
+concurrency:
+  group: backend-career-ops
+  cancel-in-progress: true
+
         description: 'Tiempo activo (horas)'
         required: true
         default: '2'
@@ -16,6 +28,10 @@ on:
 
 jobs:
   run-backend-serverless:
+concurrency:
+  group: backend-career-ops
+  cancel-in-progress: true
+
     runs-on: ubuntu-latest
 
     steps:
