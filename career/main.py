@@ -70,6 +70,11 @@ def _scrape_url(url: str, max_chars: int = 8000) -> str:
         text = re.sub(r"[ \t]{2,}", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text[:max_chars]
+    except urllib.error.HTTPError as e:
+        print(f"[orchestrator] Scraping bloqueado o fallido para {url}: HTTP {e.code}")
+        if e.code in [403, 405, 401]:
+            raise ValueError(f"Acceso denegado (HTTP {e.code}). La web bloquea bots.")
+        return ""
     except Exception as e:
         print(f"[orchestrator] Scraping fallido para {url}: {e}")
         return ""
@@ -465,6 +470,31 @@ def analizar_perfil(req: AnalizarPerfilRequest):
             }, timeout=240)
             version_id = rrhh_resp.get("version_id")
             cv_markdown = rrhh_resp.get("cv_mejorado", "")
+
+            # ── Fase 3: Guardar datos_json estructurado para que el PDF nunca falle ──
+            try:
+                datos_json_struct = {
+                    "nombre":    perfil.get("nombre", ""),
+                    "apellido":  perfil.get("apellido", ""),
+                    "email":     perfil.get("email", ""),
+                    "telefono":  perfil.get("telefono", ""),
+                    "ubicacion": perfil.get("ubicacion", ""),
+                    "linkedin":  perfil.get("linkedin", ""),
+                    "titular":   rrhh_resp.get("objetivo_profesional", ""),
+                    "resumen":   rrhh_resp.get("resumen_ejecutivo", ""),
+                    "skills": {
+                        "principales": rrhh_resp.get("skills_clave", [])[:6],
+                        "secundarias":  rrhh_resp.get("skills_clave", [])[6:],
+                    },
+                    "experiencia": [],  # El Sastre lo rellena al adaptar el CV
+                    "educacion":   [],  # El Sastre lo rellena al adaptar el CV
+                    "cv_markdown_base": cv_markdown,
+                }
+                from scripts.supabase_client import update_perfil
+                update_perfil(req.perfil_id, {"datos_json": json.dumps(datos_json_struct, ensure_ascii=False)})
+                print(f"[orchestrator] datos_json estructurado guardado para perfil {req.perfil_id}")
+            except Exception as e_json:
+                print(f"[orchestrator] Advertencia: no se pudo guardar datos_json: {e_json}")
         except Exception as e:
             notify_make({
                 "perfil": nombre,
@@ -540,11 +570,17 @@ def evaluar(req: EvaluarRequest):
     texto_oferta = req.texto_oferta or ""
     if req.url_oferta and not texto_oferta.strip():
         print(f"[orchestrator] Scraping URL: {req.url_oferta}")
-        texto_oferta = _scrape_url(req.url_oferta)
-        if texto_oferta:
-            print(f"[orchestrator] Texto extraído: {len(texto_oferta)} caracteres")
-        else:
-            print(f"[orchestrator] Scraping vacío, se pasa la URL directamente al LLM")
+        try:
+            texto_oferta = _scrape_url(req.url_oferta)
+            if texto_oferta:
+                print(f"[orchestrator] Texto extraído: {len(texto_oferta)} caracteres")
+            else:
+                raise ValueError("No se pudo extraer texto útil de la página.")
+        except Exception as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"SCRAPING_FAILED: {str(e)} Por favor, proporciona el texto de la oferta manualmente."
+            )
 
     # Llamar al evaluador ANTES de guardar en base de datos para no generar basura
     try:
