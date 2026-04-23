@@ -12,7 +12,7 @@ Flujos disponibles:
 import os, json, sys, urllib.request, threading, re
 from pathlib import Path
 from html.parser import HTMLParser
-from fastapi import FastAPI, HTTPException
+from fastapi import UploadFile, File,  FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
@@ -700,3 +700,178 @@ def tracker(perfil_id: Optional[str] = None):
     else:
         apps = get_all_applications()
     return {"total": len(apps), "aplicaciones": apps}
+
+
+# ══════════════════════════════════════════════════════════════
+# NUEVOS ENDPOINTS — Dashboard Career-Ops v3.0
+# ══════════════════════════════════════════════════════════════
+
+import os as _os
+
+# ── API Key middleware ────────────────────────────────────────
+CAREER_API_KEY = _os.getenv("CAREER_API_KEY", "")
+
+@app.middleware("http")
+async def api_key_guard(request, call_next):
+    """Protege todos los endpoints excepto /health y /docs."""
+    open_paths = ["/health", "/docs", "/openapi.json", "/redoc"]
+    if any(request.url.path.startswith(p) for p in open_paths):
+        return await call_next(request)
+    if CAREER_API_KEY:
+        key = request.headers.get("X-API-Key", "")
+        if key != CAREER_API_KEY:
+            from starlette.responses import JSONResponse
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
+# ── GET perfil individual ─────────────────────────────────────
+@app.get("/career/perfiles/{perfil_id}")
+def obtener_perfil(perfil_id: str):
+    """Devuelve un perfil completo por su UUID."""
+    from scripts.supabase_client import get_perfil_by_id
+    perfil = get_perfil_by_id(perfil_id)
+    if not perfil:
+        raise HTTPException(404, f"Perfil {perfil_id} no encontrado")
+    return perfil
+
+
+# ── PATCH perfil (actualizar campos) ─────────────────────────
+class PerfilUpdateRequest(BaseModel):
+    nombre:    Optional[str] = None
+    apellido:  Optional[str] = None
+    email:     Optional[str] = None
+    titular:   Optional[str] = None
+    telefono:  Optional[str] = None
+    linkedin:  Optional[str] = None
+    mercado:   Optional[str] = None
+    idioma:    Optional[str] = None
+    datos_json: Optional[dict] = None
+
+@app.patch("/career/perfiles/{perfil_id}")
+def actualizar_perfil(perfil_id: str, req: PerfilUpdateRequest):
+    """Actualiza campos del perfil. Solo actualiza los campos enviados."""
+    from scripts.supabase_client import update_perfil
+    cambios = {k: v for k, v in req.dict().items() if v is not None}
+    if not cambios:
+        raise HTTPException(400, "No se enviaron campos a actualizar")
+    resultado = update_perfil(perfil_id, cambios)
+    return {"status": "ok", "perfil_id": perfil_id, "actualizado": cambios}
+
+
+# ── POST cv-pdf (subir PDF → texto → JSON estructurado) ───────
+@app.post("/career/perfiles/{perfil_id}/cv-pdf")
+async def subir_cv_pdf(perfil_id: str, file: UploadFile = File(...)):
+    """
+    Acepta un PDF, extrae el texto con pdfminer, lo convierte a JSON
+    estructurado via IA y lo guarda en perfil_base.datos_json y cv_markdown.
+    """
+    from scripts.supabase_client import get_perfil_by_id, update_perfil, upload_file_to_storage
+    import io
+
+    # Validar tipo
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Solo se aceptan archivos PDF")
+
+    pdf_bytes = await file.read()
+    if len(pdf_bytes) > 10 * 1024 * 1024:  # 10MB max
+        raise HTTPException(400, "El archivo supera el limite de 10MB")
+
+    # Verificar que el perfil existe
+    perfil = get_perfil_by_id(perfil_id)
+    if not perfil:
+        raise HTTPException(404, f"Perfil {perfil_id} no encontrado")
+
+    # Extraer texto del PDF con pdfminer
+    try:
+        from pdfminer.high_level import extract_text
+        text = extract_text(io.BytesIO(pdf_bytes))
+        text = text.strip()
+        if not text or len(text) < 50:
+            raise ValueError("No se pudo extraer texto util del PDF")
+    except Exception as e:
+        raise HTTPException(422, f"Error extrayendo texto del PDF: {str(e)}")
+
+    # Subir el PDF original a Storage
+    storage_path = f"{perfil_id}/cv_original.pdf"
+    upload_file_to_storage("cvs-pdf", storage_path, pdf_bytes, "application/pdf")
+
+    # Llamar al endpoint existente analizar-perfil con el texto extraido
+    try:
+        analizar_resp = call_agent(
+            f"http://127.0.0.1:{_os.getenv('PORT', '8020')}",
+            "/career/analizar-perfil",
+            {
+                "perfil_id": perfil_id,
+                "cv_texto":  text,
+                "idioma":    perfil.get("idioma", "ES")
+            }
+        )
+    except Exception as e:
+        # Si el analisis IA falla, al menos guardamos el texto plano
+        update_perfil(perfil_id, {"cv_markdown": text})
+        return {
+            "status":    "partial",
+            "perfil_id": perfil_id,
+            "mensaje":   f"PDF subido y texto guardado. Analisis IA fallo: {str(e)}",
+            "chars":     len(text)
+        }
+
+    return {
+        "status":    "ok",
+        "perfil_id": perfil_id,
+        "mensaje":   "PDF procesado y CV estructurado correctamente",
+        "chars":     len(text),
+        "analisis":  analizar_resp
+    }
+
+
+# ── POST foto (subir imagen → Supabase Storage) ───────────────
+@app.post("/career/perfiles/{perfil_id}/foto")
+async def subir_foto(perfil_id: str, file: UploadFile = File(...)):
+    """Sube una foto del candidato a Supabase Storage y actualiza foto_url."""
+    from scripts.supabase_client import get_perfil_by_id, update_perfil, upload_file_to_storage, get_storage_signed_url
+
+    # Validar tipo MIME
+    allowed = ["image/jpeg", "image/png", "image/webp"]
+    ct = file.content_type or ""
+    if ct not in allowed and not file.filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        raise HTTPException(400, "Solo se aceptan imagenes JPG, PNG o WebP")
+
+    img_bytes = await file.read()
+    if len(img_bytes) > 3 * 1024 * 1024:  # 3MB max para fotos
+        raise HTTPException(400, "La imagen supera el limite de 3MB")
+
+    perfil = get_perfil_by_id(perfil_id)
+    if not perfil:
+        raise HTTPException(404, f"Perfil {perfil_id} no encontrado")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
+    storage_path = f"{perfil_id}/foto.{ext}"
+
+    ok = upload_file_to_storage("fotos-candidatos", storage_path, img_bytes, ct or f"image/{ext}")
+    if not ok:
+        raise HTTPException(500, "Error subiendo la imagen a Storage")
+
+    # Generar URL firmada (24h) y guardar en perfil
+    signed_url = get_storage_signed_url("fotos-candidatos", storage_path, expires_in=86400)
+    update_perfil(perfil_id, {"foto_url": signed_url})
+
+    return {
+        "status":    "ok",
+        "perfil_id": perfil_id,
+        "foto_url":  signed_url,
+        "mensaje":   "Foto actualizada correctamente"
+    }
+
+
+# ── GET backend status (para el dashboard) ───────────────────
+@app.get("/career/backend-status")
+def backend_status_info():
+    """Informa al dashboard que el backend esta activo y devuelve su URL."""
+    import socket
+    return {
+        "status":  "online",
+        "version": "2.0.0",
+        "host":    socket.gethostname()
+    }
