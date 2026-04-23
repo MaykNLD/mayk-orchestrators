@@ -4,7 +4,6 @@ concurrency:
   cancel-in-progress: true
 
 
-
 on:
   workflow_dispatch:
     inputs:
@@ -27,37 +26,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout orquestadores ─────────────────────────────────
-      - name: 📥 Clonar mayk-orchestrators
+      # ── 1. Checkout orquestadores ──
+      - name: 📦 Clonar mayk-orchestrators
         uses: actions/checkout@v4
         with:
           path: mayk-orchestrators
 
-      # ── 2. Checkout agentes (usa GH_PAT igual que deploy.yml) ────
-      - name: 📥 Clonar mayk-agents
+      # ── 2. Checkout agentes ──
+      - name: 📦 Clonar mayk-agents
         uses: actions/checkout@v4
         with:
           repository: MaykNLD/mayk-agents
           token: ${{ secrets.GH_PAT }}
           path: mayk-agents
 
-      # ── 3. Tailscale ──────────────────────────────────────────────
-      - name: 🔐 Conectar a Tailscale
+      # ── 3. Tailscale ──
+      - name: 🔒 Conectar a Tailscale
         uses: tailscale/github-action@v3
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
           hostname: "mayk-backend"
 
-      # ── 4. Preparar carpeta shared en cada agente ─────────────────
-      #       (mismo patrón que el script de deploy en deploy.yml)
-      - name: 🛠️ Preparar shared en agentes
+      # ── 4. Preparar shared en cada agente ──
+      - name: 🔧 Preparar shared en agentes
         working-directory: ./mayk-agents
         run: |
           echo ">>> Copiando shared en cada agente..."
           for d in agente-*/; do
             rm -rf "${d}shared"
             cp -r shared "${d}shared"
-            # Parchear Dockerfile si referencia ../shared
             if grep -q '\.\./shared' "${d}Dockerfile" 2>/dev/null; then
               sed -i 's|\.\./shared|shared|g' "${d}Dockerfile"
               echo "  Parcheado: ${d}Dockerfile"
@@ -65,7 +62,7 @@ jobs:
           done
           echo ">>> shared OK"
 
-      # ── 5. Build + arrancar contenedores ─────────────────────────
+      # ── 5. Build + arrancar contenedores ──
       - name: 🐳 Docker Compose up (con Secrets)
         working-directory: ./mayk-orchestrators
         env:
@@ -75,13 +72,14 @@ jobs:
           SUPABASE_ANON_KEY:   ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           MAKE_WEBHOOK_URL:    ${{ secrets.MAKE_WEBHOOK_URL }}
+          CAREER_API_KEY:      ${{ secrets.CAREER_API_KEY }}
         run: |
           docker compose -f docker-compose.career.yml up -d --build --remove-orphans
           echo "=== Estado de contenedores ==="
           docker compose -f docker-compose.career.yml ps
 
-      # ── 6. Health check ──────────────────────────────────────────
-      - name: 🩺 Health check career-orchestrator
+      # ── 6. Health check ──
+      - name: 🏥 Health check career-orchestrator
         run: |
           echo "Esperando 40s a que levanten los contenedores..."
           sleep 40
@@ -89,23 +87,54 @@ jobs:
             && echo "✅ career-orchestrator OK" \
             || echo "⚠️  career-orchestrator aún arrancando (normal en cold start)"
 
-      # ── 7. Anunciar IP de Tailscale ───────────────────────────────
-      - name: 🌐 Backend operativo
+      # ── 7. Registrar URL en Supabase (para el dashboard) ──
+      - name: 📡 Registrar backend URL en Supabase
+        env:
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          TAILSCALE_IP=$(tailscale ip -4)
+          BACKEND_URL="http://${TAILSCALE_IP}:8020"
+          echo "Registrando URL: ${BACKEND_URL}"
+          # Limpiar entradas anteriores
+          curl -s -X DELETE "${SUPABASE_URL}/rest/v1/backend_status?status=eq.online" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SECRET_KEY}"
+          # Registrar nueva URL
+          curl -s -X POST "${SUPABASE_URL}/rest/v1/backend_status" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SECRET_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"url\": \"${BACKEND_URL}\", \"status\": \"online\"}"
+          echo ""
+          echo "✅ URL registrada en Supabase: ${BACKEND_URL}"
+
+      # ── 8. Anunciar IP ──
+      - name: 📣 Backend operativo
         run: |
           echo "========================================================="
           echo "🚀 CAREER-OPS BACKEND ESTÁ OPERATIVO 🚀"
           echo "Activo durante ${{ github.event.inputs.duration }} horas."
           echo ""
-          echo "IP Tailscale (úsala en mayk-cli.py si hace falta):"
+          echo "IP Tailscale:"
           tailscale ip -4
-          echo ""
-          echo "Ejecuta mayk-cli.py en cualquier PC con Tailscale activo."
-          echo "Para apagar antes: cancela este workflow desde GitHub."
           echo "========================================================="
 
-      # ── 8. Mantener servidor vivo ─────────────────────────────────
+      # ── 9. Mantener servidor vivo ──
       - name: ⏳ Mantener vivo
         run: |
           HOURS=${{ github.event.inputs.duration }}
           echo "Servidor activo. Se apagará en ${HOURS}h."
           sleep $((HOURS * 3600))
+
+      # ── 10. Cleanup: eliminar URL de Supabase al apagar ──
+      - name: 🧹 Limpiar backend_status en Supabase
+        if: always()
+        env:
+          SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          curl -s -X DELETE "${SUPABASE_URL}/rest/v1/backend_status?status=eq.online" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SECRET_KEY}"
+          echo "✅ backend_status limpiado"
