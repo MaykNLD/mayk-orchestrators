@@ -42,32 +42,24 @@ jobs:
           token: ${{ secrets.GH_PAT }}
           path: mayk-agents
 
-      # ── 3. Tailscale ──
-      - name: 🔒 Conectar a Tailscale
-        uses: tailscale/github-action@v3
-        with:
-          oauth-client-id: ${{ secrets.CLIENT_ID }}
-          oauth-secret: ${{ secrets.CLIENTE_SECRETS }}
-          tags: tag:ci
-          hostname: "mayk-backend"
-
-      # ── 3b. Capturar IP (con reintento hasta que Tailscale autentique) ──
-      - name: 📍 Capturar IP de Tailscale
+      # ── 3. Tailscale (instalación manual — sin GitHub Action) ──
+      - name: 🔒 Instalar y conectar Tailscale
         run: |
-          echo "Esperando a que Tailscale complete la autenticación..."
-          TAILSCALE_IP=""
-          for i in {1..10}; do
-            TAILSCALE_IP=$(tailscale ip -4 2>/dev/null) && break
-            echo "  Intento ${i}/10: aún no listo, esperando 5s..."
-            sleep 5
-          done
-          if [ -z "$TAILSCALE_IP" ]; then
-            echo "Error: Tailscale no se autenticó tras 50s"
-            tailscale status
-            exit 1
-          fi
+          # Instalar Tailscale
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+          # Conectar con auth key (ephemeral: el nodo se elimina solo al terminar el job)
+          sudo tailscale up \
+            --auth-key="${{ secrets.TAILSCALE_AUTHKEY }}" \
+            --hostname="mayk-backend" \
+            --accept-routes \
+            --accept-dns=false \
+            --timeout=30s
+
+          # Capturar IP y guardarla en el entorno del workflow
+          TAILSCALE_IP=$(tailscale ip -4)
           echo "TAILSCALE_IP=${TAILSCALE_IP}" >> $GITHUB_ENV
-          echo "✅ IP capturada: ${TAILSCALE_IP}"
+          echo "✅ Tailscale conectado. IP: ${TAILSCALE_IP}"
 
       # ── 4. Preparar shared en cada agente ──
       - name: 🔧 Preparar shared en agentes
