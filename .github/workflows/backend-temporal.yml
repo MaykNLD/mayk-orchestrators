@@ -51,12 +51,23 @@ jobs:
           tags: tag:ci
           hostname: "mayk-backend"
 
-      # ── 3b. Capturar IP antes de que Docker toque la red ──
+      # ── 3b. Capturar IP (con reintento hasta que Tailscale autentique) ──
       - name: 📍 Capturar IP de Tailscale
         run: |
-          TAILSCALE_IP=$(tailscale ip -4)
+          echo "Esperando a que Tailscale complete la autenticación..."
+          TAILSCALE_IP=""
+          for i in {1..10}; do
+            TAILSCALE_IP=$(tailscale ip -4 2>/dev/null) && break
+            echo "  Intento ${i}/10: aún no listo, esperando 5s..."
+            sleep 5
+          done
+          if [ -z "$TAILSCALE_IP" ]; then
+            echo "Error: Tailscale no se autenticó tras 50s"
+            tailscale status
+            exit 1
+          fi
           echo "TAILSCALE_IP=${TAILSCALE_IP}" >> $GITHUB_ENV
-          echo "IP capturada: ${TAILSCALE_IP}"
+          echo "✅ IP capturada: ${TAILSCALE_IP}"
 
       # ── 4. Preparar shared en cada agente ──
       - name: 🔧 Preparar shared en agentes
