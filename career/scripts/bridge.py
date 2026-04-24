@@ -5,7 +5,8 @@ Procesa candidaturas pendientes en Supabase de forma automatica:
   1. Lee aplicaciones con status=pendiente
   2. Llama a agente-hr-evaluador
   3. Si score >= MIN_SCORE: llama a agente-hr-sastre + genera PDF
-  4. Actualiza Supabase + notifica Make.com/Telegram
+  4. Sube PDF a Supabase Storage (bucket cvs-generados, URL firmada 2h)
+  5. Actualiza Supabase + notifica Make.com/Telegram
 
 Uso: python bridge.py [--once] [--app-id UUID]
 """
@@ -15,7 +16,8 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
 from supabase_client import (get_pending_applications, get_perfil_base, get_first_perfil,
-                              update_application, log_ejecucion, create_application)
+                              update_application, log_ejecucion, create_application,
+                              upload_file_to_storage, get_storage_signed_url, log_error)
 from generate_pdf import generate_pdf
 
 EVALUADOR_URL = os.environ.get("AGENTE_HR_EVALUADOR_URL", "http://localhost:8011")
@@ -24,6 +26,7 @@ MAKE_WEBHOOK  = os.environ.get("MAKE_WEBHOOK_URL", "")
 MIN_SCORE     = float(os.environ.get("CAREER_MIN_SCORE", "3.0"))
 TEMPLATE_ES   = Path(__file__).parent.parent / "plantillas" / "cv-template.html"
 OUTPUT_DIR    = Path(__file__).parent.parent / "output"
+BUCKET_CVS    = "cvs-generados"   # bucket para CVs adaptados por oferta (temporales, 2h)
 
 def call_agent(url: str, payload: dict) -> dict:
     data = json.dumps(payload).encode()
@@ -43,6 +46,43 @@ def notify_make(payload: dict):
     except Exception as e:
         print(f"  Make.com notificacion fallida: {e}")
 
+def _build_perfil_json(perfil: dict) -> dict:
+    """Construye el dict del perfil a partir de los campos reales de perfil_base.
+    Antes se usaba datos_json (campo JSONB legacy), ahora los datos estan en columnas individuales.
+    """
+    return {
+        "nombre":    perfil.get("nombre", ""),
+        "apellido":  perfil.get("apellido", ""),
+        "email":     perfil.get("email", ""),
+        "linkedin":  perfil.get("linkedin", ""),
+        "nivel":     perfil.get("nivel", ""),
+        "objetivo":  perfil.get("objetivo", ""),
+        "ubicacion": perfil.get("ubicacion", ""),
+        "mercado":   perfil.get("mercado", "ES"),
+        "idioma":    perfil.get("idioma", "ES"),
+        "titular":   perfil.get("titular", ""),
+        # Texto del CV (truncado para no superar el context del LLM)
+        "cv_texto":  (perfil.get("cv_markdown") or "")[:6000],
+    }
+
+def _upload_pdf_to_storage(pdf_path: str, app_id: str, company: str) -> str:
+    """Sube el PDF generado al bucket cvs-generados y devuelve URL firmada (2h).
+    Si falla, devuelve cadena vacia — el pipeline no se rompe.
+    """
+    try:
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+        slug = f"{app_id}/{company.lower().replace(' ', '-')}-{datetime.now().strftime('%Y%m%d%H%M')}.pdf"
+        ok = upload_file_to_storage(BUCKET_CVS, slug, pdf_bytes, "application/pdf")
+        if not ok:
+            print(f"  Advertencia: no se pudo subir PDF a Storage")
+            return ""
+        signed_url = get_storage_signed_url(BUCKET_CVS, slug, expires_in=7200)  # 2 horas
+        return signed_url
+    except Exception as e:
+        print(f"  Advertencia: error subiendo PDF a Storage: {e}")
+        return ""
+
 def process_application(app: dict, perfil: dict):
     app_id   = app["id"]
     company  = app.get("company", "desconocida")
@@ -50,18 +90,21 @@ def process_application(app: dict, perfil: dict):
     idioma   = perfil.get("idioma", "ES")
     t_start  = time.time()
 
-    print(f"\n→ Procesando: {company} — {role}")
+    # Construir perfil para los agentes a partir de campos reales (no datos_json)
+    perfil_json = _build_perfil_json(perfil)
+
+    print(f"\n-> Procesando: {company} — {role}")
     update_application(app_id, {"status": "evaluando"})
 
     # 1. EVALUACION
     try:
         eval_resp = call_agent(EVALUADOR_URL, {
             "url_oferta":       app.get("url", ""),
-            "perfil_base_json": perfil.get("datos_json", {}),
+            "perfil_base_json": perfil_json,
             "idioma":           idioma,
         })
-        fit_score   = eval_resp.get("fit_score", 0.0)
-        grado       = eval_resp.get("grado", "F")
+        fit_score    = eval_resp.get("fit_score", 0.0)
+        grado        = eval_resp.get("grado", "F")
         raw_analysis = json.loads(eval_resp.get("result", "{}"))
 
         update_application(app_id, {
@@ -77,6 +120,7 @@ def process_application(app: dict, perfil: dict):
         print(f"  Evaluacion: {grado} ({fit_score}/5)")
     except Exception as e:
         update_application(app_id, {"status": "descartado", "notas": f"Error evaluacion: {e}"})
+        log_error("bridge.evaluacion", str(e), app_id=app_id)
         print(f"  ERROR evaluacion: {e}")
         return
 
@@ -90,9 +134,10 @@ def process_application(app: dict, perfil: dict):
         return
 
     # 2. ADAPTACION CV
+    tailored = {}
     try:
         sastre_resp = call_agent(SASTRE_URL, {
-            "perfil_base_json":        perfil.get("datos_json", {}),
+            "perfil_base_json":        perfil_json,
             "analisis_evaluador_json": raw_analysis,
             "idioma":                  idioma,
             "mercado_geografico":      perfil.get("mercado", "ES"),
@@ -102,33 +147,53 @@ def process_application(app: dict, perfil: dict):
         log_ejecucion({"aplicacion_id": app_id, "etapa": "adaptacion",
                        "modelo_ia": "claude-3-5-haiku", "resultado": "ok",
                        "duracion_ms": int((time.time()-t_start)*1000)})
-        print(f"  CV adaptado: {len(tailored.get('keywords_insertadas',[]))} keywords insertadas")
+        print(f"  CV adaptado: {len(tailored.get('keywords_insertadas', []))} keywords insertadas")
     except Exception as e:
+        log_error("bridge.adaptacion", str(e), app_id=app_id)
         print(f"  ERROR adaptacion: {e}")
         return
 
-    # 3. GENERAR PDF
+    # 3. GENERAR PDF (local, temporal) + SUBIR A STORAGE
+    pdf_storage_url = ""
     try:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        slug = f"{company.lower().replace(' ','-')}-{datetime.now().strftime('%Y%m')}"
-        pdf_path = str(OUTPUT_DIR / f"{slug}.pdf")
-        cv_json = tailored.get("cv_adaptado_json", {})
+        slug      = f"{company.lower().replace(' ', '-')}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        pdf_path  = str(OUTPUT_DIR / f"{slug}.pdf")
+        cv_json   = tailored.get("cv_adaptado_json", {})
         generate_pdf(cv_json, str(TEMPLATE_ES), pdf_path, idioma)
-        update_application(app_id, {"status": "cv_generado", "pdf_url": pdf_path})
+        print(f"  PDF generado: {pdf_path}")
+
+        # Subir a Storage y obtener URL real (firmada 2h)
+        pdf_storage_url = _upload_pdf_to_storage(pdf_path, app_id, company)
+        if pdf_storage_url:
+            print(f"  PDF en Storage: {pdf_storage_url[:80]}...")
+        else:
+            print("  PDF generado localmente pero no subido a Storage (revisar bucket cvs-generados)")
+
+        update_application(app_id, {
+            "status":  "cv_generado",
+            "pdf_url": pdf_storage_url or None,  # None si fallo la subida
+        })
         log_ejecucion({"aplicacion_id": app_id, "etapa": "generacion_pdf",
                        "resultado": "ok", "duracion_ms": int((time.time()-t_start)*1000)})
-        print(f"  PDF: {pdf_path}")
     except Exception as e:
+        log_error("bridge.generacion_pdf", str(e), app_id=app_id)
         print(f"  PDF fallido (CV adaptado guardado de todas formas): {e}")
         update_application(app_id, {"status": "cv_generado"})
 
     # 4. NOTIFICAR
-    notify_make({"company": company, "role": role, "score": fit_score,
-                 "grado": grado, "status": "cv_generado", "pdf_url": pdf_path if "pdf_path" in dir() else None})
+    notify_make({
+        "company":  company,
+        "role":     role,
+        "score":    fit_score,
+        "grado":    grado,
+        "status":   "cv_generado",
+        "pdf_url":  pdf_storage_url or None,
+    })
 
 def main():
     parser = argparse.ArgumentParser(description="Career-Ops Bridge")
-    parser.add_argument("--once", action="store_true", help="Procesar una sola vez y salir")
+    parser.add_argument("--once",   action="store_true", help="Procesar una sola vez y salir")
     parser.add_argument("--app-id", help="Procesar una candidatura especifica por ID")
     args = parser.parse_args()
 
