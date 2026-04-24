@@ -4,6 +4,13 @@
 .env.*.local
 .env.production
 
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
 # Archivos privados de cliente (se archivan fuera del repo al cerrar proyecto)
 **/proyectos/*/privado/
 **/proyectos/*/cliente-privado/
@@ -27,6 +34,7 @@ logs/
 # Temporales
 tmp/
 temp/
+
 # Career-Ops data (gitignored)
 career/data/portals.yml
 career/data/scan-history.tsv
