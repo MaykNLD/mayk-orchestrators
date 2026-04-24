@@ -51,6 +51,13 @@ jobs:
           tags: tag:ci
           hostname: "mayk-backend"
 
+      # ── 3b. Capturar IP antes de que Docker toque la red ──
+      - name: 📍 Capturar IP de Tailscale
+        run: |
+          TAILSCALE_IP=$(tailscale ip -4)
+          echo "TAILSCALE_IP=${TAILSCALE_IP}" >> $GITHUB_ENV
+          echo "IP capturada: ${TAILSCALE_IP}"
+
       # ── 4. Preparar shared en cada agente ──
       - name: 🔧 Preparar shared en agentes
         working-directory: ./mayk-agents
@@ -97,7 +104,6 @@ jobs:
           SUPABASE_URL:        ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: |
-          TAILSCALE_IP=$(tailscale ip -4)
           BACKEND_URL="http://${TAILSCALE_IP}:8020"
           echo "Registrando URL: ${BACKEND_URL}"
           # Limpiar entradas anteriores
