@@ -46,6 +46,7 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
           hostname: "mayk-backend"
+          ephemeral: true
 
       # ── 4. Preparar shared en cada agente ──
       - name: 🔧 Preparar shared en agentes
