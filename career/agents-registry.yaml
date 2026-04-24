@@ -7,7 +7,7 @@ agents:
     port: 8011
     endpoint: /execute
     activacion: "Siempre que llega una oferta nueva (status=pendiente)"
-    modelo: google/gemini-2.5-pro
+    modelo: google/gemini-2.0-flash-001
 
   - id: agente-hr-sastre
     repo: mayk-agents
@@ -15,4 +15,28 @@ agents:
     port: 8012
     endpoint: /execute
     activacion: "Solo si fit_score >= 3.0 despues del evaluador"
-    modelo: anthropic/claude-3-5-haiku
+    modelo: deepseek/deepseek-chat
+
+  - id: agente-hr-rrhh
+    repo: mayk-agents
+    path: agente-hr-rrhh/agent.yaml
+    port: 8013
+    endpoint: /execute
+    activacion: "Invocado manualmente desde CLI o dashboard para mejorar el CV base"
+    modelo: deepseek/deepseek-chat
+
+  - id: agente-hr-diseno
+    repo: mayk-agents
+    path: agente-hr-diseno/agent.yaml
+    port: 8014
+    endpoint: /generar-cv-html
+    activacion: "Invocado desde el dashboard cuando el usuario solicita generar PDF del CV"
+    modelo: google/gemini-2.0-flash-001
+
+  - id: agente-scanner
+    repo: mayk-agents
+    path: agente-scanner/agent.yaml
+    port: 8015
+    endpoint: /scan
+    activacion: "Invocado manualmente para buscar ofertas nuevas en Remotive y otras APIs"
+    modelo: google/gemini-2.0-flash-001
