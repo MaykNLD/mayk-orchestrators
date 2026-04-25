@@ -375,26 +375,37 @@ def worker_polling_loop():
                     print(f"[orchestrator-worker] HTML recibido OK ({len(html_cv)} chars)")
 
                     # ── Paso 2: Playwright convierte HTML → PDF ──
+                    # Usamos 'load' en vez de 'networkidle' para evitar timeout
+                    # si el HTML carga Google Fonts u otros recursos externos.
                     print(f"[orchestrator-worker] Generando PDF con Playwright...")
+                    pdf_bytes = None
                     try:
-                        from playwright.sync_api import sync_playwright
+                        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
                         with sync_playwright() as pw:
-                            browser = pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
-                            page    = browser.new_page()
-                            page.set_content(html_cv, wait_until="networkidle")
-                            pdf_bytes = page.pdf(
-                                format="A4",
-                                print_background=True,
-                                margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
+                            browser = pw.chromium.launch(
+                                args=["--no-sandbox", "--disable-dev-shm-usage",
+                                      "--disable-gpu", "--single-process"]
                             )
-                            browser.close()
+                            try:
+                                page = browser.new_page()
+                                # 'load' espera el evento load del DOM (no networkidle que puede colgar)
+                                page.set_content(html_cv, wait_until="load", timeout=30_000)
+                                pdf_bytes = page.pdf(
+                                    format="A4",
+                                    print_background=True,
+                                    margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
+                                )
+                            finally:
+                                browser.close()
+                    except PWTimeout:
+                        raise ValueError("Playwright: timeout esperando que el HTML cargara (>30s). Revisa recursos externos en el HTML.")
                     except Exception as e_pw:
                         raise ValueError(f"Playwright fallo al generar PDF: {e_pw}")
 
                     if not pdf_bytes or len(pdf_bytes) < 1000:
                         raise ValueError(
                             f"PDF generado invalido ({len(pdf_bytes) if pdf_bytes else 0} bytes). "
-                            "Puede que el HTML este mal formado."
+                            "El HTML puede estar vacio o mal formado."
                         )
                     print(f"[orchestrator-worker] PDF generado OK ({len(pdf_bytes)} bytes)")
 
