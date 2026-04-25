@@ -279,6 +279,34 @@ def worker_polling_loop():
                         try: datos_dl = json.loads(datos_dl)
                         except: datos_dl = {}
 
+                    # El agente-hr-diseno requiere cv_markdown en el perfil.
+                    # Si el usuario importo su CV via PDF, cv_markdown puede estar vacio
+                    # pero datos_json tiene los datos estructurados. Construimos el texto.
+                    cv_markdown = perfil_dl.get("cv_markdown", "").strip()
+                    if not cv_markdown and datos_dl:
+                        nombre_dl = f"{perfil_dl.get('nombre', '')} {perfil_dl.get('apellido', '')}".strip()
+                        cv_markdown = f"""Candidato: {nombre_dl}
+Email: {perfil_dl.get('email', '')}
+Telefono: {datos_dl.get('telefono', '')}
+Resumen: {datos_dl.get('resumen', '')}
+Habilidades: {', '.join(datos_dl.get('habilidades', []))}
+Experiencia:
+{json.dumps(datos_dl.get('experiencia', []), ensure_ascii=False, indent=2)}
+Educacion:
+{json.dumps(datos_dl.get('educacion', []), ensure_ascii=False, indent=2)}
+Certificaciones:
+{json.dumps(datos_dl.get('certificaciones', []), ensure_ascii=False, indent=2)}
+Idiomas:
+{json.dumps(datos_dl.get('idiomas', []), ensure_ascii=False, indent=2)}"""
+
+                        # Guardar cv_markdown en Supabase para que el agente lo encuentre
+                        from scripts.supabase_client import update_perfil as _update_perfil
+                        _update_perfil(perfil_id, {"cv_markdown": cv_markdown})
+                        print(f"[orchestrator-worker] cv_markdown construido desde datos_json para {perfil_id}")
+
+                    if not cv_markdown:
+                        raise ValueError("El perfil no tiene cv_markdown ni datos_json. Sube el CV primero.")
+
                     foto_modo = "con_foto" if con_foto else "sin_foto"
                     foto_url  = datos_dl.get("foto_url") if con_foto else None
 
