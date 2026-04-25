@@ -251,13 +251,20 @@ def worker_polling_loop():
                     _extract_cv_from_pdf(perfil_row)
                 except Exception as e:
                     print(f"[cv-extractor] ❌ Error extrayendo CV para {perfil_row.get('id')}: {e}")
-                    update_perfil(perfil_row.get("id"), {"cv_extraction_pending": False})
+                    update_perfil(perfil_row.get('id'), {"cv_extraction_pending": False})
 
             # ── Job tipo 3: Generacion de CV principal para descarga ──
+            # Arquitectura:
+            #   1. El orquestador construye/recupera el cv_markdown del perfil
+            #   2. Llama al agente-hr-diseno que genera SOLO el HTML (sin WeasyPrint)
+            #   3. El orquestador convierte el HTML a PDF con Playwright (Chromium)
+            #   4. El orquestador sube el PDF a Supabase Storage y obtiene signed_url
             from scripts.supabase_client import (
                 get_pending_cv_download_requests,
                 update_cv_download_request,
                 update_perfil as _upd_perfil,
+                upload_pdf_to_storage,
+                get_signed_url_for_pdf,
             )
             pending_downloads = get_pending_cv_download_requests(limit=2)
             for dl_job in pending_downloads:
@@ -280,18 +287,6 @@ def worker_polling_loop():
                     if not perfil_dl:
                         raise ValueError(f"Perfil {perfil_id} no encontrado en la BD")
 
-                    # ── Parsear datos_json de forma 100% segura ──
-                    raw_datos = perfil_dl.get("datos_json")
-                    if isinstance(raw_datos, str):
-                        try:
-                            datos_dl = json.loads(raw_datos)
-                        except Exception:
-                            datos_dl = {}
-                    elif isinstance(raw_datos, dict):
-                        datos_dl = raw_datos
-                    else:
-                        datos_dl = {}
-
                     # ── Helper: extraer campo como string, nunca None ──
                     def _s(v):
                         return str(v).strip() if v is not None else ""
@@ -303,6 +298,16 @@ def worker_polling_loop():
                         try: return list(v)
                         except: return []
 
+                    # ── Parsear datos_json de forma 100% segura ──
+                    raw_datos = perfil_dl.get("datos_json")
+                    if isinstance(raw_datos, str):
+                        try:    datos_dl = json.loads(raw_datos)
+                        except: datos_dl = {}
+                    elif isinstance(raw_datos, dict):
+                        datos_dl = raw_datos
+                    else:
+                        datos_dl = {}
+
                     # ── Construir/recuperar cv_markdown ──
                     # El agente-hr-diseno lee cv_markdown del perfil en Supabase.
                     # Si es None o vacio (perfil importado via PDF), lo construimos
@@ -313,7 +318,7 @@ def worker_polling_loop():
                         if not datos_dl:
                             raise ValueError(
                                 "El perfil no tiene cv_markdown ni datos_json. "
-                                "Sube tu CV en PDF primero e importa los datos."
+                                "Importa tu CV en PDF primero desde 'Mi CV'."
                             )
                         nombre_dl = (
                             _s(perfil_dl.get("nombre")) + " " +
@@ -338,25 +343,22 @@ def worker_polling_loop():
                             f"Certificaciones:\n{_json_safe(datos_dl.get('certificaciones'))}\n"
                             f"Idiomas:\n{_json_safe(datos_dl.get('idiomas'))}"
                         )
-
-                        # Persistir para que el agente lo encuentre directamente
                         try:
                             _upd_perfil(perfil_id, {"cv_markdown": cv_markdown})
-                            print(f"[orchestrator-worker] cv_markdown generado y persistido para {perfil_id}")
+                            print(f"[orchestrator-worker] cv_markdown construido y persistido para {perfil_id}")
                         except Exception as e_save:
                             print(f"[orchestrator-worker] Advertencia: no se pudo persistir cv_markdown: {e_save}")
-                            # Continuamos igual — el agente leerá el perfil actualizado en el siguiente intento
 
                     # ── Preparar foto ──
                     foto_modo = "con_foto" if con_foto else "sin_foto"
                     foto_url  = _s(datos_dl.get("foto_url")) if con_foto else None
                     if con_foto and not foto_url:
-                        # No hay foto cargada — degradar a sin_foto sin fallar
                         foto_modo = "sin_foto"
                         foto_url  = None
-                        print(f"[orchestrator-worker] Aviso: con_foto=True pero foto_url vacia. Usando sin_foto.")
+                        print(f"[orchestrator-worker] con_foto=True pero foto_url vacia. Usando sin_foto.")
 
-                    # ── Llamar al agente de diseño ──
+                    # ── Paso 1: Agente genera el HTML ──
+                    print(f"[orchestrator-worker] Llamando agente-hr-diseno para HTML...")
                     diseno_resp = call_agent(DISENO_URL, "/generar-cv-html", {
                         "perfil_id": perfil_id,
                         "foto_modo": foto_modo,
@@ -364,37 +366,63 @@ def worker_polling_loop():
                         "idioma":    idioma,
                     }, timeout=180)
 
-                    # El agente puede devolver pdf_url o signed_url
-                    signed_url = (
-                        _s(diseno_resp.get("pdf_url")) or
-                        _s(diseno_resp.get("signed_url")) or ""
-                    )
-                    if not signed_url:
-                        # El agente devolvio html pero no PDF (WeasyPrint no disponible?)
+                    html_cv = _s(diseno_resp.get("html_cv"))
+                    if not html_cv:
                         raise ValueError(
-                            "El agente de diseno no devolvio URL de PDF. "
-                            "Verifica que WeasyPrint este instalado en el contenedor."
+                            "El agente de diseno devolvio html_cv vacio. "
+                            f"Respuesta: {str(diseno_resp)[:200]}"
                         )
+                    print(f"[orchestrator-worker] HTML recibido OK ({len(html_cv)} chars)")
 
+                    # ── Paso 2: Playwright convierte HTML → PDF ──
+                    print(f"[orchestrator-worker] Generando PDF con Playwright...")
+                    try:
+                        from playwright.sync_api import sync_playwright
+                        with sync_playwright() as pw:
+                            browser = pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+                            page    = browser.new_page()
+                            page.set_content(html_cv, wait_until="networkidle")
+                            pdf_bytes = page.pdf(
+                                format="A4",
+                                print_background=True,
+                                margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
+                            )
+                            browser.close()
+                    except Exception as e_pw:
+                        raise ValueError(f"Playwright fallo al generar PDF: {e_pw}")
+
+                    if not pdf_bytes or len(pdf_bytes) < 1000:
+                        raise ValueError(
+                            f"PDF generado invalido ({len(pdf_bytes) if pdf_bytes else 0} bytes). "
+                            "Puede que el HTML este mal formado."
+                        )
+                    print(f"[orchestrator-worker] PDF generado OK ({len(pdf_bytes)} bytes)")
+
+                    # ── Paso 3: Subir a Supabase Storage + URL firmada ──
+                    print(f"[orchestrator-worker] Subiendo PDF a Supabase Storage...")
+                    filename   = upload_pdf_to_storage(pdf_bytes, perfil_id)
+                    signed_url = get_signed_url_for_pdf(filename, expires_in=86400)
+                    print(f"[orchestrator-worker] URL firmada obtenida: {signed_url[:80]}...")
+
+                    # ── Paso 4: Marcar job como completado ──
                     update_cv_download_request(job_id, {
                         "status":     "done",
                         "signed_url": signed_url,
                     })
-                    print(f"[orchestrator-worker] CV download completado OK: {job_id} → {signed_url[:60]}...")
+                    print(f"[orchestrator-worker] ✅ CV download completado: {job_id}")
 
                 except Exception as e:
                     err = str(e)
-                    print(f"[orchestrator-worker] ERROR CV download {job_id}: {err}")
+                    print(f"[orchestrator-worker] ❌ ERROR CV download {job_id}: {err}")
                     try:
                         update_cv_download_request(job_id, {
                             "status":    "error",
                             "error_msg": err[:500],
                         })
                     except Exception as e_upd:
-                        print(f"[orchestrator-worker] No se pudo actualizar job a error: {e_upd}")
+                        print(f"[orchestrator-worker] No se pudo marcar job como error: {e_upd}")
                     log_error("worker_cv_download", err,
                               extra={"job_id": job_id, "perfil_id": perfil_id})
-
 
         except Exception as e:
             print(f"[orchestrator-worker] Error en el loop principal: {e}")

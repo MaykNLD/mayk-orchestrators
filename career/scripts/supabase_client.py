@@ -259,6 +259,79 @@ def delete_storage_file(bucket: str, path: str) -> bool:
         return False
 
 
+# ─── PDF STORAGE (usado por el worker tras generar PDF con Playwright) ─────────
+
+def upload_pdf_to_storage(pdf_bytes: bytes, perfil_id: str) -> str:
+    """Sube un PDF a Supabase Storage (bucket cvs-pdf) y devuelve la ruta del archivo.
+    Lanza RuntimeError si falla — nunca devuelve None.
+    """
+    import time as _time
+    import urllib.error as _ue
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("SUPABASE_URL o SUPABASE_KEY no configuradas")
+
+    if not pdf_bytes:
+        raise RuntimeError("pdf_bytes esta vacio, no hay nada que subir")
+
+    filename   = f"{perfil_id}/{int(_time.time())}_cv.pdf"
+    upload_url = f"{SUPABASE_URL}/storage/v1/object/cvs-pdf/{filename}"
+    headers    = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type":  "application/pdf",
+        "x-upsert":      "true",
+    }
+    req = urllib.request.Request(upload_url, data=pdf_bytes, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            if r.status not in (200, 201):
+                raise RuntimeError(f"Storage upload HTTP {r.status}")
+        print(f"[supabase_client] PDF subido: {filename} ({len(pdf_bytes)} bytes)")
+        return filename
+    except _ue.HTTPError as e:
+        body = e.read().decode(errors="ignore")[:300]
+        raise RuntimeError(f"Storage upload HTTP {e.code}: {body}")
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Storage upload error: {e}")
+
+
+def get_signed_url_for_pdf(filename: str, expires_in: int = 86400) -> str:
+    """Genera una URL firmada para un archivo en el bucket cvs-pdf.
+    Lanza RuntimeError si falla — nunca devuelve None.
+    """
+    import urllib.error as _ue
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("SUPABASE_URL o SUPABASE_KEY no configuradas")
+
+    sign_url   = f"{SUPABASE_URL}/storage/v1/object/sign/cvs-pdf/{filename}"
+    body_bytes = json.dumps({"expiresIn": expires_in}).encode()
+    headers    = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type":  "application/json",
+    }
+    req = urllib.request.Request(sign_url, data=body_bytes, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data        = json.loads(r.read().decode())
+            signed_path = (data.get("signedURL") or "").strip()
+            if not signed_path:
+                raise RuntimeError(f"signedURL vacio. Respuesta: {data}")
+            # La API devuelve una ruta relativa — completamos con el base URL
+            if signed_path.startswith("/"):
+                return f"{SUPABASE_URL}/storage/v1{signed_path}"
+            return signed_path
+    except _ue.HTTPError as e:
+        body = e.read().decode(errors="ignore")[:300]
+        raise RuntimeError(f"Storage sign HTTP {e.code}: {body}")
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Storage sign error: {e}")
+
+
 # ─── CV DOWNLOAD REQUESTS (Job Queue) ───────────────────────────────────────
 
 def create_cv_download_request(perfil_id: str, con_foto: bool = True, idioma: str = "ES") -> dict:
