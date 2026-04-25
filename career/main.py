@@ -103,9 +103,8 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
     }
 
     update_perfil(perfil_id, {
-        "datos_json":             json.dumps(nuevo_datos, ensure_ascii=False),
+        "datos_json":             nuevo_datos,
         "cv_extraction_pending":  False,
-        # También actualizar cv_markdown si el agente devuelve uno mejorado
         **({"cv_markdown": rrhh_resp["cv_mejorado"]} if rrhh_resp.get("cv_mejorado") else {}),
     })
     print(f"[cv-extractor] datos_json actualizado para perfil {perfil_id}")
