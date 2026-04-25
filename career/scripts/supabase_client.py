@@ -127,6 +127,24 @@ def get_evaluando_applications(limit: int = 5) -> list:
     """Obtiene las candidaturas que el dashboard marcó para ser procesadas."""
     return _get("aplicaciones_career", f"status=eq.evaluando&order=created_at.asc&limit={limit}")
 
+def update_heartbeat() -> None:
+    """Actualiza el heartbeat del backend en Supabase para que el dashboard sepa que está vivo."""
+    import datetime
+    url = f"{SUPABASE_URL}/rest/v1/backend_status"
+    h = _headers()
+    h["Prefer"] = "resolution=merge-duplicates,return=minimal"
+    data = json.dumps({
+        "id": "career-orchestrator",
+        "last_seen": datetime.datetime.utcnow().isoformat() + "Z",
+        "status": "online"
+    }).encode()
+    try:
+        req = urllib.request.Request(url, data=data, headers=h, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            r.read()
+    except Exception as e:
+        print(f"[heartbeat] Error actualizando heartbeat: {e}")
+
 # ─── SCAN HISTORY ────────────────────────────────────────────────
 
 def get_scan_history() -> list:

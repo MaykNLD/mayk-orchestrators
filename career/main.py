@@ -36,28 +36,33 @@ app = FastAPI(title="Career-Ops Orchestrator", version="2.0.0")
 
 # ── Worker Pattern: Background Polling ────────────────────────────────
 import time
-from scripts.supabase_client import get_evaluando_applications, update_application
+from scripts.supabase_client import get_evaluando_applications, update_application, update_heartbeat
 
 def worker_polling_loop():
     print("[orchestrator-worker] Inicializando Worker Polling Loop...")
+    heartbeat_counter = 0
     while True:
         try:
+            # Heartbeat cada 30 segundos (6 ciclos de 5s)
+            heartbeat_counter += 1
+            if heartbeat_counter >= 6:
+                update_heartbeat()
+                heartbeat_counter = 0
+
             apps = get_evaluando_applications(limit=3)
             for app_db in apps:
                 app_id = app_db.get("id")
                 if not app_id: continue
                 
                 print(f"\n[orchestrator-worker] 🚀 Nuevo trabajo encontrado: {app_id} (URL: {app_db.get('url')})")
-                # Bloquear la candidatura para que no sea procesada por otro worker
                 update_application(app_id, {"status": "procesando_ia"})
                 
-                # Ejecutar evaluacion usando la funcion interna
                 try:
                     req = EvaluarRequest(
                         url_oferta=app_db.get("url", ""),
                         perfil_id=app_db.get("perfil_id"),
                         app_id=app_id,
-                        forzar=True # Siempre forzamos el CV desde el Dashboard
+                        forzar=True
                     )
                     evaluar(req)
                     print(f"[orchestrator-worker] ✅ Trabajo completado: {app_id}")
