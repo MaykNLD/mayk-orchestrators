@@ -797,19 +797,30 @@ Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
 
     # ── Scraping previo: si hay URL y no hay texto_oferta, leer la web ──
     texto_oferta = req.texto_oferta or ""
+    # Intentar obtener el texto de la candidatura existente (notas del usuario) como fallback
+    app_notas = ""
+    if app_id:
+        app_record_pre = get_application(app_id)
+        if app_record_pre:
+            app_notas = app_record_pre.get("notas") or ""
     if req.url_oferta and not texto_oferta.strip():
         print(f"[orchestrator] Scraping URL: {req.url_oferta}")
         try:
             texto_oferta = _scrape_url(req.url_oferta)
             if texto_oferta:
-                print(f"[orchestrator] Texto extraído: {len(texto_oferta)} caracteres")
+                print(f"[orchestrator] Texto extraido: {len(texto_oferta)} caracteres")
             else:
-                raise ValueError("No se pudo extraer texto útil de la página.")
+                raise ValueError("No se pudo extraer texto util de la pagina.")
         except Exception as e:
-            raise HTTPException(
-                status_code=422,
-                detail=f"SCRAPING_FAILED: {str(e)} Por favor, proporciona el texto de la oferta manualmente."
-            )
+            print(f"[orchestrator] Scraping fallo: {e}")
+            if app_notas.strip():
+                texto_oferta = app_notas
+                print(f"[orchestrator] Usando notas de la candidatura como fallback: {len(texto_oferta)} chars")
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"SCRAPING_FAILED: {str(e)} Anade el texto de la oferta en el campo Notas de la candidatura."
+                )
 
     # Llamar al evaluador ANTES de guardar en base de datos para no generar basura
     try:
@@ -850,6 +861,7 @@ Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
             })
             app_id = app_record.get("id")
 
+        # Actualizar la candidatura: NUNCA sobreescribir company/job_title del usuario
         if app_id:
             update_application(app_id, {
                 "fit_score":    fit_score,
@@ -857,8 +869,7 @@ Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
                 "raw_analysis": raw_analysis,
                 "keywords":     raw_analysis.get("keywords_clave", []),
                 "status":       "en_proceso" if fit_score >= MIN_SCORE else "descartado",
-                "company":      empresa_eval if empresa_eval not in ("?", "Desconocida", "") else "Pendiente",
-                "job_title":    rol_eval    if rol_eval    not in ("?", "No especificado", "") else "Oferta",
+                # company y job_title NO se tocan: son datos que puso el usuario
             })
     except Exception as e:
         if app_id:
