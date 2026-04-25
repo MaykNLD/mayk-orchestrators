@@ -34,26 +34,94 @@ MIN_SCORE     = float(os.environ.get("CAREER_MIN_SCORE", "3.0"))
 
 app = FastAPI(title="Career-Ops Orchestrator", version="2.0.0")
 
-# ── Worker Pattern: Background Polling ────────────────────────────────
-import time
-from scripts.supabase_client import get_evaluando_applications, update_application, update_heartbeat, get_pending_cv_extractions, update_perfil
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+
+CV_EXTRACTION_PROMPT = """
+Eres un experto en recursos humanos. Extrae TODA la informacion del siguiente CV y devuelve SOLO un JSON valido, sin texto extra, sin markdown, sin explicaciones.
+
+Estructura EXACTA que debes devolver:
+{
+  "resumen": "Resumen profesional de 2-4 frases",
+  "habilidades": ["habilidad1", "habilidad2", ...],
+  "experiencia": [
+    {
+      "empresa": "Nombre empresa",
+      "puesto": "Titulo del puesto",
+      "fecha_inicio": "MM/YYYY o YYYY",
+      "fecha_fin": "MM/YYYY o Presente",
+      "descripcion": "Descripcion de responsabilidades y logros"
+    }
+  ],
+  "educacion": [
+    {
+      "institucion": "Nombre universidad/instituto",
+      "titulo": "Titulo obtenido",
+      "fecha": "YYYY o YYYY-YYYY"
+    }
+  ],
+  "certificaciones": [
+    {
+      "nombre": "Nombre certificacion",
+      "emisor": "Organizacion emisora",
+      "fecha": "YYYY"
+    }
+  ],
+  "idiomas": [
+    {
+      "idioma": "Nombre idioma",
+      "nivel": "Nativo|Avanzado|Intermedio|Basico"
+    }
+  ]
+}
+
+Si no hay datos para un campo, usa lista vacia [] o string vacio "". NO inventes datos.
+
+CV A EXTRAER:
+{cv_texto}
+"""
+
+def _call_openrouter(prompt: str, model: str = "anthropic/claude-3-haiku") -> str:
+    """Llama directamente a OpenRouter con el modelo indicado. Devuelve el texto de la respuesta."""
+    if not OPENROUTER_API_KEY:
+        raise ValueError("OPENROUTER_API_KEY no configurada")
+    data = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 3000,
+        "temperature": 0.1,
+    }).encode()
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://career-ops.vercel.app",
+            "X-Title": "Career-Ops",
+        },
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=90) as r:
+        resp = json.loads(r.read().decode())
+    return resp["choices"][0]["message"]["content"]
 
 def _extract_cv_from_pdf(perfil: dict) -> dict:
     """
-    Llama al agente RRHH para extraer datos estructurados del CV
-    y escribe datos_json en perfil_base con el formato que usa el dashboard.
+    Extrae datos estructurados del CV usando Claude Haiku directamente via OpenRouter.
+    Rellena completamente datos_json: resumen, habilidades, experiencia, educacion,
+    certificaciones e idiomas.
     """
     perfil_id = perfil.get("id", "?")
     print(f"[cv-extractor] Iniciando extraccion para perfil {perfil_id}")
 
-    # Obtener texto del CV desde cv_markdown o desde datos_json
+    # 1. Obtener el texto del CV
     cv_texto = (perfil.get("cv_markdown") or "").strip()
     datos_json = perfil.get("datos_json") or {}
     if isinstance(datos_json, str):
         try: datos_json = json.loads(datos_json)
         except: datos_json = {}
 
-    # Si hay URL del PDF en datos_json, intentar descargar y extraer texto
+    # 2. Si no hay cv_markdown suficiente, intentar descargar el PDF
     pdf_url = datos_json.get("cv_pdf_url", "")
     if pdf_url and len(cv_texto) < 500:
         try:
@@ -64,50 +132,65 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
                 from io import BytesIO
                 from pdfminer.high_level import extract_text as pdf_extract
                 cv_texto = pdf_extract(BytesIO(pdf_bytes))[:8000]
-                print(f"[cv-extractor] Texto extraido del PDF: {len(cv_texto)} chars")
+                print(f"[cv-extractor] PDF descargado: {len(cv_texto)} chars")
             except ImportError:
-                print("[cv-extractor] pdfminer no disponible, usando cv_markdown")
+                print("[cv-extractor] pdfminer no disponible")
         except Exception as e:
             print(f"[cv-extractor] No se pudo descargar el PDF: {e}")
 
     if len(cv_texto) < 50:
-        print(f"[cv-extractor] Sin texto suficiente para extraer. Abortando.")
+        print(f"[cv-extractor] Sin texto suficiente. Abortando.")
         update_perfil(perfil_id, {"cv_extraction_pending": False})
         return {}
 
-    # Llamar al agente RRHH con el endpoint correcto: /analizar-cv
+    # 3. Llamar a Claude Haiku para extraccion estructurada completa
+    prompt = CV_EXTRACTION_PROMPT.replace("{cv_texto}", cv_texto[:7000])
+    raw_json = ""
+    # Intentar primero con Claude Haiku, fallback a Gemini Flash
+    for model in ["anthropic/claude-3-haiku", "google/gemini-2.0-flash-001"]:
+        try:
+            raw_json = _call_openrouter(prompt, model=model)
+            print(f"[cv-extractor] LLM ({model}) respondio: {len(raw_json)} chars")
+            break
+        except Exception as e:
+            print(f"[cv-extractor] Fallo con {model}: {e}")
+
+    if not raw_json:
+        print("[cv-extractor] Todos los modelos fallaron. Abortando.")
+        update_perfil(perfil_id, {"cv_extraction_pending": False})
+        return {}
+
+    # 4. Parsear el JSON de la respuesta (limpiar markdown si el LLM lo inyecto)
+    clean = raw_json.strip()
+    if clean.startswith("```"):
+        clean = re.sub(r"^```[a-z]*\n?", "", clean)
+        clean = re.sub(r"```$", "", clean).strip()
     try:
-        rrhh_resp = call_agent(RRHH_URL, "/analizar-cv", {
-            "perfil_id": perfil_id,
-            "cv_texto":  cv_texto[:7000],
-            "idioma":    perfil.get("idioma", "ES"),
-        }, timeout=180)
+        extracted = json.loads(clean)
     except Exception as e:
-        print(f"[cv-extractor] Error llamando al agente RRHH: {e}")
+        print(f"[cv-extractor] No se pudo parsear JSON: {e}\nRespuesta: {clean[:300]}")
         update_perfil(perfil_id, {"cv_extraction_pending": False})
         return {}
 
-    # Mapear usando los campos REALES que devuelve el agente RRHH
-    skills_clave = rrhh_resp.get("skills_clave", [])
-    # Preservar foto y pdf_url ya guardados
+    # 5. Construir datos_json preservando foto y pdf ya subidos
     nuevo_datos = {
         "foto_url":        datos_json.get("foto_url", ""),
         "cv_pdf_url":      datos_json.get("cv_pdf_url", ""),
         "telefono":        datos_json.get("telefono", ""),
-        "resumen":         rrhh_resp.get("resumen_ejecutivo", "") or rrhh_resp.get("objetivo_profesional", ""),
-        "habilidades":     skills_clave if isinstance(skills_clave, list) else [],
-        "experiencia":     rrhh_resp.get("experiencia", datos_json.get("experiencia", [])),
-        "educacion":       rrhh_resp.get("educacion",   datos_json.get("educacion",   [])),
-        "certificaciones": rrhh_resp.get("certificaciones", datos_json.get("certificaciones", [])),
-        "idiomas":         rrhh_resp.get("idiomas",     datos_json.get("idiomas",     [])),
+        "resumen":         extracted.get("resumen", ""),
+        "habilidades":     extracted.get("habilidades", []),
+        "experiencia":     extracted.get("experiencia", []),
+        "educacion":       extracted.get("educacion", []),
+        "certificaciones": extracted.get("certificaciones", []),
+        "idiomas":         extracted.get("idiomas", []),
     }
 
+    # 6. Guardar en Supabase y resetear flag
     update_perfil(perfil_id, {
-        "datos_json":             nuevo_datos,
-        "cv_extraction_pending":  False,
-        **({"cv_markdown": rrhh_resp["cv_mejorado"]} if rrhh_resp.get("cv_mejorado") else {}),
+        "datos_json":            nuevo_datos,
+        "cv_extraction_pending": False,
     })
-    print(f"[cv-extractor] datos_json actualizado para perfil {perfil_id}")
+    print(f"[cv-extractor] Extraccion completada: {len(nuevo_datos['experiencia'])} exp, {len(nuevo_datos['habilidades'])} skills")
     return nuevo_datos
 
 
@@ -674,13 +757,27 @@ def evaluar(req: EvaluarRequest):
 
     # BUG 2 GUARD: Bloquear evaluacion si el candidato no tiene CV cargado
     cv_markdown = perfil.get("cv_markdown") or ""
-    datos_json = perfil.get("datos_json") or {}
-    if not cv_markdown.strip() and not datos_json:
+    datos_json_raw = perfil.get("datos_json") or {}
+    if isinstance(datos_json_raw, str):
+        try: datos_json_raw = json.loads(datos_json_raw)
+        except: datos_json_raw = {}
+    tiene_cv = cv_markdown.strip() or datos_json_raw.get("cv_pdf_url") or datos_json_raw.get("resumen")
+    if not tiene_cv:
         nombre_c = f"{perfil.get('nombre','')} {perfil.get('apellido','')}".strip()
-        raise HTTPException(400, f"El candidato '{nombre_c}' no tiene CV cargado. Ve a la Opcion 1 (Subir CV) primero.")
+        raise HTTPException(400, f"El candidato '{nombre_c}' no tiene CV cargado. Sube tu CV en Mi CV primero.")
 
-    # Usar cv_markdown si existe, fallback a datos_json (retrocompatibilidad)
-    cv_base_dict = {"cv_markdown": cv_markdown} if cv_markdown else datos_json
+    # Usar cv_markdown si existe, fallback a datos_json formateado
+    if cv_markdown.strip():
+        cv_base_dict = {"cv_markdown": cv_markdown}
+    else:
+        # Construir texto del CV desde datos_json para el evaluador
+        dj = datos_json_raw
+        cv_construido = f"""Candidato: {perfil.get('nombre','')} {perfil.get('apellido','')}
+Resumen: {dj.get('resumen','')}
+Habilidades: {', '.join(dj.get('habilidades',[]))}
+Experiencia: {json.dumps(dj.get('experiencia',[]), ensure_ascii=False)}
+Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
+        cv_base_dict = {"cv_markdown": cv_construido}
 
     empresa_inicial, rol_inicial = _get_empresa_rol({})
     
