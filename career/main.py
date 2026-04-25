@@ -478,7 +478,7 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             # Subir a Supabase Storage
             obj_path = clean_filename
             with open(out_path, "rb") as f:
-                upload_res = upload_file_to_storage("pdfs", obj_path, f.read(), "application/pdf")
+                upload_res = upload_file_to_storage("cvs-pdf", obj_path, f.read(), "application/pdf")
             
             # Zero-Residue Guarantee
             try:
@@ -487,8 +487,8 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
                 pass
             
             if upload_res:
-                pdf_url = get_storage_signed_url("pdfs", obj_path, 3600)  # Firma magica de 1 hora
-                print(f"[orchestrator] PDF subido temporalmente a Supabase: {pdf_url}")
+                pdf_url = get_storage_signed_url("cvs-pdf", obj_path, 3600)
+                print(f"[orchestrator] PDF subido a Supabase Storage (bucket: cvs-pdf): {pdf_url}")
 
                 # Destructor programado: Eliminar archivo de Supabase Storage en 3600s (1 hora)
                 def kill_residue():
@@ -520,38 +520,15 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "status":           "cv_generado",
         })
 
-        # Leer empresa y rol desde la BD (fuente de verdad) — no desde raw_analysis que puede ser incompleto
-        app_db = get_application(app_id) if app_id else {}
-        empresa = app_db.get("company") or _get_empresa_rol(raw_analysis)[0]
+        # Leer empresa y rol desde la BD (fuente de verdad) — nunca sobreescribir
+        app_db  = get_application(app_id) if app_id else {}
+        empresa = app_db.get("company")    or _get_empresa_rol(raw_analysis)[0]
         rol     = app_db.get("job_title") or _get_empresa_rol(raw_analysis)[1]
-        # Filtrar valores placeholder y aplicar heuristicas de URL si fallan
-        if empresa in ("Pendiente", "", "?", "Desconocida", None): 
+        # Solo rellenar con heuristica si el campo esta vacio en BD (no sobreescribir con Desconocida)
+        if not empresa or empresa in ("", "?", None):
             empresa = _get_empresa_rol(raw_analysis)[0]
-        if rol in ("Oferta", "", "?", "No especificado", None): 
+        if not rol or rol in ("", "?", None):
             rol = _get_empresa_rol(raw_analysis)[1]
-
-        # HEURÍSTICA DE URL (ÚLTIMO RECURSO): Si sigue siendo Desconocida/No especificado
-        if app_db.get("url"):
-            from urllib.parse import urlparse
-            import re
-            parsed_url = urlparse(app_db["url"])
-            heuristica_aplicada = False
-            if empresa in ("?", "Desconocida", "Pendiente"):
-                empresa = "Desconocida"
-                heuristica_aplicada = True
-            if rol in ("?", "No especificado", "Oferta"):
-                path_parts = parsed_url.path.strip("/").split("/")
-                if path_parts:
-                    raw_path = path_parts[-1].split("-ID-")[0] # Buscojobs spec
-                    raw_path = raw_path.split("?")[0]
-                    rol = re.sub(r'[-_]', ' ', raw_path).title()
-                    heuristica_aplicada = True
-            
-            if heuristica_aplicada and app_id:
-                update_application(app_id, {
-                    "company": empresa,
-                    "job_title": rol
-                })
 
         fit_sc = raw_analysis.get("fit_score", 0.0)
         grado  = raw_analysis.get("grado", "?")
@@ -819,19 +796,22 @@ Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
         print(f"[orchestrator] Scraping URL: {req.url_oferta}")
         try:
             texto_oferta = _scrape_url(req.url_oferta)
-            if texto_oferta:
+            if texto_oferta and len(texto_oferta) >= 300:
                 print(f"[orchestrator] Texto extraido: {len(texto_oferta)} caracteres")
+            elif texto_oferta and len(texto_oferta) < 300:
+                print(f"[orchestrator] AVISO: texto muy corto ({len(texto_oferta)} chars) — posible pagina JS-renderizada")
+                raise ValueError(f"Texto insuficiente ({len(texto_oferta)} chars). La pagina puede requerir JavaScript.")
             else:
                 raise ValueError("No se pudo extraer texto util de la pagina.")
         except Exception as e:
             print(f"[orchestrator] Scraping fallo: {e}")
             if app_notas.strip():
                 texto_oferta = app_notas
-                print(f"[orchestrator] Usando notas de la candidatura como fallback: {len(texto_oferta)} chars")
+                print(f"[orchestrator] Usando notas como fallback: {len(texto_oferta)} chars")
             else:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"SCRAPING_FAILED: {str(e)} Anade el texto de la oferta en el campo Notas de la candidatura."
+                    detail=f"SCRAPING_FAILED: {str(e)} Anade el texto de la oferta en Notas."
                 )
 
     # Llamar al evaluador ANTES de guardar en base de datos para no generar basura
@@ -912,8 +892,9 @@ Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
         "bloques":       raw_analysis,
     }
 
-    # Lanzar Sastre si score >= MIN_SCORE  ó  si el usuario forzó el envío
-    if fit_score >= MIN_SCORE or req.forzar:
+    # Lanzar Sastre si score >= MIN_SCORE o si el usuario forzó Y la evaluación produjo algo real
+    score_real = fit_score > 0.0 and grado != "F"
+    if (fit_score >= MIN_SCORE or (req.forzar and score_real)):
         t = threading.Thread(
             target=run_sastre_background,
             args=(app_id, perfil, raw_analysis, req.idioma, req.forzar),
