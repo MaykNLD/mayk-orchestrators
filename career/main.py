@@ -9,7 +9,7 @@ Flujos disponibles:
   GET  /career/tracker          → Historial de aplicaciones
   GET  /health                  → Estado de todos los agentes
 """
-import os, json, sys, urllib.request, threading, re
+import os, json, sys, urllib.request, threading, re, time
 from pathlib import Path
 from html.parser import HTMLParser
 from fastapi import UploadFile, File,  FastAPI, HTTPException
@@ -34,7 +34,14 @@ MIN_SCORE     = float(os.environ.get("CAREER_MIN_SCORE", "3.0"))
 
 app = FastAPI(title="Career-Ops Orchestrator", version="2.0.0")
 
+# ── Worker imports ────────────────────────────────────────────────────
+from scripts.supabase_client import (
+    get_evaluando_applications, update_heartbeat,
+    get_pending_cv_extractions, update_perfil
+)
+
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+
 
 CV_EXTRACTION_PROMPT = """
 Eres un experto en recursos humanos. Extrae TODA la informacion del siguiente CV y devuelve SOLO un JSON valido, sin texto extra, sin markdown, sin explicaciones.
