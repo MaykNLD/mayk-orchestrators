@@ -263,8 +263,6 @@ def worker_polling_loop():
                 get_pending_cv_download_requests,
                 update_cv_download_request,
                 update_perfil as _upd_perfil,
-                upload_pdf_to_storage,
-                get_signed_url_for_pdf,
             )
             pending_downloads = get_pending_cv_download_requests(limit=2)
             for dl_job in pending_downloads:
@@ -409,16 +407,18 @@ def worker_polling_loop():
                         )
                     print(f"[orchestrator-worker] PDF generado OK ({len(pdf_bytes)} bytes)")
 
-                    # ── Paso 3: Subir a Supabase Storage + URL firmada ──
-                    print(f"[orchestrator-worker] Subiendo PDF a Supabase Storage...")
-                    filename   = upload_pdf_to_storage(pdf_bytes, perfil_id)
-                    signed_url = get_signed_url_for_pdf(filename, expires_in=86400)
-                    print(f"[orchestrator-worker] URL firmada obtenida: {signed_url[:80]}...")
+                    # ── Paso 3: Guardar PDF como data URL en Supabase DB ──
+                    # Evitamos Supabase Storage (auth/JWT issues) guardando el PDF
+                    # codificado en base64 directamente en la BD.
+                    # El frontend lo convierte a Blob para la descarga.
+                    import base64 as _b64
+                    data_url = "data:application/pdf;base64," + _b64.b64encode(pdf_bytes).decode()
+                    print(f"[orchestrator-worker] PDF codificado en base64 ({len(data_url)} chars)")
 
                     # ── Paso 4: Marcar job como completado ──
                     update_cv_download_request(job_id, {
                         "status":     "done",
-                        "signed_url": signed_url,
+                        "signed_url": data_url,
                     })
                     print(f"[orchestrator-worker] ✅ CV download completado: {job_id}")
 
