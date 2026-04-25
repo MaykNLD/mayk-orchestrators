@@ -76,6 +76,24 @@ jobs:
           done
           echo ">>> shared OK"
 
+      # ── 4b. Dependencias de sistema para WeasyPrint ──
+      - name: 🖨️ Instalar dependencias sistema para WeasyPrint
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 \
+            libpangoft2-1.0-0 \
+            libpangocairo-1.0-0 \
+            libgdk-pixbuf2.0-0 \
+            libffi-dev \
+            libcairo2 \
+            libjpeg-dev \
+            libopenjp2-7 \
+            shared-mime-info \
+            fonts-liberation \
+            fonts-dejavu-core
+          echo "✅ Dependencias WeasyPrint instaladas"
+
       # ── 5. Build + arrancar contenedores ──
       - name: 🐳 Docker Compose up (con Secrets)
         working-directory: ./mayk-orchestrators
