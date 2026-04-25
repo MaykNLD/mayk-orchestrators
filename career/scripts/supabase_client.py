@@ -70,6 +70,10 @@ def update_perfil(perfil_id: str, data: dict) -> dict:
     """Actualiza campos del perfil base (nombre, email, cv_markdown, etc.)"""
     return _patch("perfil_base", "id", perfil_id, data)
 
+def get_pending_cv_extractions(limit: int = 5) -> list:
+    """Devuelve perfiles con cv_extraction_pending=true para que el worker procese su PDF."""
+    return _get("perfil_base", f"cv_extraction_pending=eq.true&limit={limit}&select=id,nombre,apellido,datos_json,cv_markdown,idioma,mercado")
+
 def delete_perfil(perfil_id: str) -> bool:
     """Elimina un perfil de la tabla perfil_base. Devuelve True si tuvo exito."""
     url = f"{SUPABASE_URL}/rest/v1/perfil_base?id=eq.{perfil_id}"

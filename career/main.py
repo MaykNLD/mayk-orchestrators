@@ -36,7 +36,84 @@ app = FastAPI(title="Career-Ops Orchestrator", version="2.0.0")
 
 # ── Worker Pattern: Background Polling ────────────────────────────────
 import time
-from scripts.supabase_client import get_evaluando_applications, update_application, update_heartbeat
+from scripts.supabase_client import get_evaluando_applications, update_application, update_heartbeat, get_pending_cv_extractions, update_perfil
+
+def _extract_cv_from_pdf(perfil: dict) -> dict:
+    """
+    Llama al agente RRHH para extraer datos estructurados del texto del CV
+    y devuelve un dict con la estructura de datos_json del dashboard.
+    """
+    perfil_id = perfil.get("id", "?")
+    print(f"[cv-extractor] Iniciando extraccion para perfil {perfil_id}")
+
+    # Intentar obtener el texto del CV desde cv_markdown o desde el PDF en datos_json
+    cv_texto = (perfil.get("cv_markdown") or "").strip()
+    datos_json = perfil.get("datos_json") or {}
+    if isinstance(datos_json, str):
+        try: datos_json = json.loads(datos_json)
+        except: datos_json = {}
+
+    # Si hay URL del PDF en datos_json, intentar descargar y extraer texto
+    pdf_url = datos_json.get("cv_pdf_url", "")
+    if pdf_url and len(cv_texto) < 500:
+        try:
+            req = urllib.request.Request(pdf_url, headers={"User-Agent": "Career-Ops/2.0"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                pdf_bytes = r.read()
+            # Extraer texto del PDF usando pdfminer si disponible, sino texto plano
+            try:
+                from io import BytesIO
+                from pdfminer.high_level import extract_text as pdf_extract
+                cv_texto = pdf_extract(BytesIO(pdf_bytes))[:8000]
+                print(f"[cv-extractor] Texto extraido del PDF: {len(cv_texto)} chars")
+            except ImportError:
+                print("[cv-extractor] pdfminer no disponible, usando cv_markdown")
+        except Exception as e:
+            print(f"[cv-extractor] No se pudo descargar el PDF: {e}")
+
+    if len(cv_texto) < 50:
+        print(f"[cv-extractor] Sin texto suficiente para extraer. Abortando.")
+        update_perfil(perfil_id, {"cv_extraction_pending": False})
+        return {}
+
+    # Llamar al agente RRHH para estructurar el CV
+    try:
+        rrhh_resp = call_agent(RRHH_URL, "/execute", {
+            "cv_texto": cv_texto[:7000],
+            "perfil_id": perfil_id,
+            "idioma": perfil.get("idioma", "ES"),
+            "foto_modo": "sin_foto"
+        }, timeout=180)
+        raw_result = rrhh_resp.get("result", "{}")
+        if isinstance(raw_result, str):
+            extracted = json.loads(raw_result)
+        else:
+            extracted = raw_result
+    except Exception as e:
+        print(f"[cv-extractor] Error llamando al agente RRHH: {e}")
+        update_perfil(perfil_id, {"cv_extraction_pending": False})
+        return {}
+
+    # Mapear la respuesta del RRHH al formato datos_json del dashboard
+    nuevo_datos = {
+        "resumen":        extracted.get("resumen") or extracted.get("perfil") or "",
+        "telefono":       extracted.get("telefono") or datos_json.get("telefono", ""),
+        "foto_url":       datos_json.get("foto_url", ""),
+        "cv_pdf_url":     datos_json.get("cv_pdf_url", ""),
+        "habilidades":    extracted.get("habilidades") or extracted.get("skills") or datos_json.get("habilidades", []),
+        "experiencia":    extracted.get("experiencia") or extracted.get("experience") or datos_json.get("experiencia", []),
+        "educacion":      extracted.get("educacion") or extracted.get("education") or datos_json.get("educacion", []),
+        "certificaciones":extracted.get("certificaciones") or extracted.get("certifications") or datos_json.get("certificaciones", []),
+        "idiomas":        extracted.get("idiomas") or extracted.get("languages") or datos_json.get("idiomas", []),
+    }
+
+    update_perfil(perfil_id, {
+        "datos_json": nuevo_datos,
+        "cv_extraction_pending": False
+    })
+    print(f"[cv-extractor] ✅ datos_json actualizado para perfil {perfil_id}")
+    return nuevo_datos
+
 
 def worker_polling_loop():
     print("[orchestrator-worker] Inicializando Worker Polling Loop...")
@@ -49,14 +126,13 @@ def worker_polling_loop():
                 update_heartbeat()
                 heartbeat_counter = 0
 
+            # ── Job tipo 1: Candidaturas a evaluar ──
             apps = get_evaluando_applications(limit=3)
             for app_db in apps:
                 app_id = app_db.get("id")
                 if not app_id: continue
-                
-                print(f"\n[orchestrator-worker] 🚀 Nuevo trabajo encontrado: {app_id} (URL: {app_db.get('url')})")
+                print(f"\n[orchestrator-worker] 🚀 Candidatura: {app_id}")
                 update_application(app_id, {"status": "procesando_ia"})
-                
                 try:
                     req = EvaluarRequest(
                         url_oferta=app_db.get("url", ""),
@@ -65,10 +141,20 @@ def worker_polling_loop():
                         forzar=True
                     )
                     evaluar(req)
-                    print(f"[orchestrator-worker] ✅ Trabajo completado: {app_id}")
+                    print(f"[orchestrator-worker] ✅ Candidatura completada: {app_id}")
                 except Exception as e:
-                    print(f"[orchestrator-worker] ❌ Error procesando {app_id}: {e}")
+                    print(f"[orchestrator-worker] ❌ Error candidatura {app_id}: {e}")
                     update_application(app_id, {"status": "error_ia", "notas": str(e)})
+
+            # ── Job tipo 2: Extraccion de CV desde PDF ──
+            pending_extractions = get_pending_cv_extractions(limit=2)
+            for perfil_row in pending_extractions:
+                try:
+                    _extract_cv_from_pdf(perfil_row)
+                except Exception as e:
+                    print(f"[cv-extractor] ❌ Error extrayendo CV para {perfil_row.get('id')}: {e}")
+                    update_perfil(perfil_row.get("id"), {"cv_extraction_pending": False})
+
         except Exception as e:
             print(f"[orchestrator-worker] Error en el loop principal: {e}")
         time.sleep(5)
