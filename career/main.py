@@ -34,7 +34,44 @@ MIN_SCORE     = float(os.environ.get("CAREER_MIN_SCORE", "3.0"))
 
 app = FastAPI(title="Career-Ops Orchestrator", version="2.0.0")
 
+# ── Worker Pattern: Background Polling ────────────────────────────────
+import time
+from scripts.supabase_client import get_evaluando_applications, update_application
 
+def worker_polling_loop():
+    print("[orchestrator-worker] Inicializando Worker Polling Loop...")
+    while True:
+        try:
+            apps = get_evaluando_applications(limit=3)
+            for app_db in apps:
+                app_id = app_db.get("id")
+                if not app_id: continue
+                
+                print(f"\n[orchestrator-worker] 🚀 Nuevo trabajo encontrado: {app_id} (URL: {app_db.get('url')})")
+                # Bloquear la candidatura para que no sea procesada por otro worker
+                update_application(app_id, {"status": "procesando_ia"})
+                
+                # Ejecutar evaluacion usando la funcion interna
+                try:
+                    req = EvaluarRequest(
+                        url_oferta=app_db.get("url", ""),
+                        perfil_id=app_db.get("perfil_id"),
+                        app_id=app_id,
+                        forzar=True # Siempre forzamos el CV desde el Dashboard
+                    )
+                    evaluar(req)
+                    print(f"[orchestrator-worker] ✅ Trabajo completado: {app_id}")
+                except Exception as e:
+                    print(f"[orchestrator-worker] ❌ Error procesando {app_id}: {e}")
+                    update_application(app_id, {"status": "error_ia", "notas": str(e)})
+        except Exception as e:
+            print(f"[orchestrator-worker] Error en el loop principal: {e}")
+        time.sleep(5)
+
+@app.on_event("startup")
+def start_background_worker():
+    t = threading.Thread(target=worker_polling_loop, daemon=True)
+    t.start()
 # ── Scraping de URLs de ofertas (stdlib puro, sin dependencias externas) ──
 class _TextExtractor(HTMLParser):
     """Extrae texto plano de HTML ignorando scripts, estilos y atributos."""
@@ -110,6 +147,7 @@ class EvaluarRequest(BaseModel):
     url_oferta:   Optional[str] = None
     texto_oferta: Optional[str] = None
     perfil_id:    Optional[str] = None
+    app_id:       Optional[str] = None
     idioma:       str = "ES"
     forzar:       bool = False   # Si True, genera CV adaptado aunque el score sea bajo
 
@@ -559,9 +597,9 @@ def evaluar(req: EvaluarRequest):
 
     empresa_inicial, rol_inicial = _get_empresa_rol({})
     
-    # ── Deduplicacion por URL ──
-    app_id = None
-    if req.url_oferta:
+    # ── Deduplicacion por URL o ID ──
+    app_id = req.app_id
+    if not app_id and req.url_oferta:
         ext_app = get_application_by_url(perfil["id"], req.url_oferta)
         if ext_app:
             app_id = ext_app["id"]

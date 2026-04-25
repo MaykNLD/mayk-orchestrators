@@ -123,6 +123,10 @@ def get_pending_applications(perfil_id: Optional[str] = None) -> list:
         base = f"perfil_id=eq.{perfil_id}&{base}"
     return _get("aplicaciones_career", base)
 
+def get_evaluando_applications(limit: int = 5) -> list:
+    """Obtiene las candidaturas que el dashboard marcó para ser procesadas."""
+    return _get("aplicaciones_career", f"status=eq.evaluando&order=created_at.asc&limit={limit}")
+
 # ─── SCAN HISTORY ────────────────────────────────────────────────
 
 def get_scan_history() -> list:
