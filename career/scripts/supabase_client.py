@@ -6,7 +6,30 @@ import os, json, urllib.request, urllib.error
 from typing import Optional
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").strip()
+
+# Prioridad: service_role key (necesaria para Storage y operaciones admin)
+# Intentamos SUPABASE_SECRET_KEY primero, luego SUPABASE_KEY, luego SUPABASE_ANON_KEY
+_secret_key = (os.environ.get("SUPABASE_SECRET_KEY") or "").strip()
+_key        = (os.environ.get("SUPABASE_KEY")        or "").strip()
+_anon_key   = (os.environ.get("SUPABASE_ANON_KEY")   or "").strip()
+
+# La service_role key siempre es más larga que la anon key (>200 chars)
+# Usamos la primera que parezca un JWT válido (empieza con "eyJ")
+def _pick_best_key(*keys):
+    for k in keys:
+        if k and k.startswith("eyJ") and len(k) > 100:
+            return k
+    for k in keys:
+        if k:
+            return k
+    return ""
+
+SUPABASE_KEY = _pick_best_key(_secret_key, _key, _anon_key)
+
+# Para operaciones de Storage siempre usar la service_role key
+SUPABASE_SERVICE_KEY = _pick_best_key(_secret_key, _key)
+
 
 def _headers():
     return {
@@ -263,13 +286,20 @@ def delete_storage_file(bucket: str, path: str) -> bool:
 
 def upload_pdf_to_storage(pdf_bytes: bytes, perfil_id: str) -> str:
     """Sube un PDF a Supabase Storage (bucket cvs-pdf) y devuelve la ruta del archivo.
+    Usa SUPABASE_SERVICE_KEY (service_role) para saltarse RLS.
     Lanza RuntimeError si falla — nunca devuelve None.
     """
     import time as _time
     import urllib.error as _ue
 
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError("SUPABASE_URL o SUPABASE_KEY no configuradas")
+    key = SUPABASE_SERVICE_KEY
+    if not SUPABASE_URL or not key:
+        raise RuntimeError(
+            f"Credenciales Storage no configuradas. "
+            f"URL={'OK' if SUPABASE_URL else 'FALTA'} KEY={'OK' if key else 'FALTA'} "
+            f"(SUPABASE_SECRET_KEY={bool(os.environ.get('SUPABASE_SECRET_KEY'))} "
+            f"SUPABASE_KEY={bool(os.environ.get('SUPABASE_KEY'))})"
+        )
 
     if not pdf_bytes:
         raise RuntimeError("pdf_bytes esta vacio, no hay nada que subir")
@@ -277,19 +307,20 @@ def upload_pdf_to_storage(pdf_bytes: bytes, perfil_id: str) -> str:
     filename   = f"{perfil_id}/{int(_time.time())}_cv.pdf"
     upload_url = f"{SUPABASE_URL}/storage/v1/object/cvs-pdf/{filename}"
     headers    = {
-        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Authorization": f"Bearer {key}",
         "Content-Type":  "application/pdf",
         "x-upsert":      "true",
     }
+    print(f"[supabase_client] Upload Storage con key[0:20]={key[:20]}...")
     req = urllib.request.Request(upload_url, data=pdf_bytes, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             if r.status not in (200, 201):
                 raise RuntimeError(f"Storage upload HTTP {r.status}")
-        print(f"[supabase_client] PDF subido: {filename} ({len(pdf_bytes)} bytes)")
+        print(f"[supabase_client] PDF subido OK: {filename} ({len(pdf_bytes)} bytes)")
         return filename
     except _ue.HTTPError as e:
-        body = e.read().decode(errors="ignore")[:300]
+        body = e.read().decode(errors="ignore")[:400]
         raise RuntimeError(f"Storage upload HTTP {e.code}: {body}")
     except RuntimeError:
         raise
@@ -299,17 +330,19 @@ def upload_pdf_to_storage(pdf_bytes: bytes, perfil_id: str) -> str:
 
 def get_signed_url_for_pdf(filename: str, expires_in: int = 86400) -> str:
     """Genera una URL firmada para un archivo en el bucket cvs-pdf.
+    Usa SUPABASE_SERVICE_KEY (service_role) para saltarse RLS.
     Lanza RuntimeError si falla — nunca devuelve None.
     """
     import urllib.error as _ue
 
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError("SUPABASE_URL o SUPABASE_KEY no configuradas")
+    key = SUPABASE_SERVICE_KEY
+    if not SUPABASE_URL or not key:
+        raise RuntimeError("Credenciales Storage no configuradas para firmar URL")
 
     sign_url   = f"{SUPABASE_URL}/storage/v1/object/sign/cvs-pdf/{filename}"
     body_bytes = json.dumps({"expiresIn": expires_in}).encode()
     headers    = {
-        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Authorization": f"Bearer {key}",
         "Content-Type":  "application/json",
     }
     req = urllib.request.Request(sign_url, data=body_bytes, headers=headers, method="POST")
@@ -318,13 +351,12 @@ def get_signed_url_for_pdf(filename: str, expires_in: int = 86400) -> str:
             data        = json.loads(r.read().decode())
             signed_path = (data.get("signedURL") or "").strip()
             if not signed_path:
-                raise RuntimeError(f"signedURL vacio. Respuesta: {data}")
-            # La API devuelve una ruta relativa — completamos con el base URL
+                raise RuntimeError(f"signedURL vacio. Respuesta completa: {data}")
             if signed_path.startswith("/"):
                 return f"{SUPABASE_URL}/storage/v1{signed_path}"
             return signed_path
     except _ue.HTTPError as e:
-        body = e.read().decode(errors="ignore")[:300]
+        body = e.read().decode(errors="ignore")[:400]
         raise RuntimeError(f"Storage sign HTTP {e.code}: {body}")
     except RuntimeError:
         raise
