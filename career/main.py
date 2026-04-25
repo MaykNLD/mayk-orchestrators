@@ -520,47 +520,22 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
             "status":           "cv_generado",
         })
 
-        # Leer empresa y rol desde la BD (fuente de verdad) — nunca sobreescribir
-        app_db  = get_application(app_id) if app_id else {}
-        empresa = app_db.get("company")    or _get_empresa_rol(raw_analysis)[0]
-        rol     = app_db.get("job_title") or _get_empresa_rol(raw_analysis)[1]
-        # Solo rellenar con heuristica si el campo esta vacio en BD (no sobreescribir con Desconocida)
-        if not empresa or empresa in ("", "?", None):
-            empresa = _get_empresa_rol(raw_analysis)[0]
-        if not rol or rol in ("", "?", None):
-            rol = _get_empresa_rol(raw_analysis)[1]
-
-        fit_sc = raw_analysis.get("fit_score", 0.0)
-        grado  = raw_analysis.get("grado", "?")
-
         nombre_candidato = f"{perfil.get('nombre','')} {perfil.get('apellido','')}".strip()
-        notify_make({
-            "candidato": nombre_candidato,
-            "company": empresa,
-            "role":    rol,
-            "score":   fit_sc,
-            "grado":   grado,
-            "perfil":  nombre_candidato,
-            "status":  "cv_generado",
-            "pdf_url": pdf_url or "pendiente",
-            "mensaje": f"[{nombre_candidato}] CV adaptado generado para {empresa} — {rol}. Score {fit_sc}/5 ({grado}).",
-        })
+        empresa = get_application(app_id).get("company", "") if app_id else ""
+        rol     = get_application(app_id).get("job_title", "") if app_id else ""
+        fit_sc  = raw_analysis.get("fit_score", 0.0)
+        grado   = raw_analysis.get("grado", "?")
+        print(f"[orchestrator] CV generado para {nombre_candidato} — {empresa} ({rol}). Score {fit_sc}/5 ({grado}).")
 
     except Exception as e:
         error_msg = str(e)
         print(f"[orchestrator] ERROR CRITICO en sastre background: {error_msg}")
         if app_id:
             update_application(app_id, {"status": "error_sastre", "notas": error_msg})
-            log_error("run_sastre_background", error_msg, app_id=app_id)
-        # SIEMPRE notificar a Telegram — nunca dejar al usuario sin respuesta
-        notify_make({
-            "company": raw_analysis.get("empresa", "Desconocida") if raw_analysis else "Desconocida",
-            "role":    raw_analysis.get("rol",     "?")           if raw_analysis else "?",
-            "score":   raw_analysis.get("fit_score", 0.0)         if raw_analysis else 0.0,
-            "grado":   raw_analysis.get("grado",    "?")          if raw_analysis else "?",
-            "status":  "error_critico",
-            "mensaje": f"ERROR en generacion de CV adaptado: {error_msg[:300]}",
-        })
+        # log_error persiste en Supabase Y notifica a Make.com (sin duplicados)
+        log_error("run_sastre_background", error_msg, app_id=app_id,
+                  extra={"empresa": raw_analysis.get("empresa") if raw_analysis else "?",
+                         "rol":     raw_analysis.get("rol")     if raw_analysis else "?"})
 
 
 # ── Background para flujo analizar-perfil ────────────────────────────
@@ -576,16 +551,13 @@ def run_diseno_background(perfil_id: str, version_id: Optional[str],
             "idioma":       idioma,
         }, timeout=240)
 
-        # Exito: no se notifica por Telegram, el usuario ya ve el resultado en la CLI
-        print(f"[orchestrator] Diseno completado para {perfil_nombre}. PDF: {pdf_url or 'sin PDF'}")
+        # Exito: no se notifica (Make.com solo recibe errores)
+        print(f"[orchestrator] Diseno completado para {perfil_nombre}.")
     except Exception as e:
-        print(f"[orchestrator] Error en diseno background: {e}")
-        notify_make({
-            "candidato": perfil_nombre,
-            "perfil":    perfil_nombre,
-            "status":    "error_diseno",
-            "mensaje":   f"[{perfil_nombre}] Error al generar el diseno del CV: {str(e)}",
-        })
+        err_msg = str(e)
+        print(f"[orchestrator] Error en diseno background: {err_msg}")
+        log_error("run_diseno_background", err_msg,
+                  extra={"perfil_nombre": perfil_nombre})
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -700,11 +672,8 @@ def analizar_perfil(req: AnalizarPerfilRequest):
             except Exception as e_json:
                 print(f"[orchestrator] Advertencia: no se pudo guardar datos_json: {e_json}")
         except Exception as e:
-            notify_make({
-                "perfil": nombre,
-                "status": "error_ia",
-                "mensaje": f"Ups, el agente HR-RRHH (OpenRouter) ha fallado al analizar tu CV: {str(e)}"
-            })
+            log_error("analizar_perfil_rrhh", str(e),
+                      extra={"perfil_id": req.perfil_id, "perfil": nombre})
             raise HTTPException(500, f"Error en agente-hr-rrhh: {e}")
         
         nivel = rrhh_resp.get("nivel_detectado", "")
@@ -866,16 +835,8 @@ Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
     except Exception as e:
         if app_id:
             update_application(app_id, {"status": "error_evaluador", "notas": str(e)})
-            log_error("evaluar_endpoint", str(e), app_id=app_id)
-        notify_make({
-            "perfil": f"{perfil.get('nombre', '')} {perfil.get('apellido', '')}",
-            "status": "error_ia",
-            "company": "?",
-            "role": "?",
-            "score": 0.0,
-            "grado": "F",
-            "mensaje": f"El Evaluador IA colapso al revisar la oferta: {str(e)}"
-        })
+        # log_error persiste en Supabase Y notifica a Make.com
+        log_error("evaluar_endpoint", str(e), app_id=app_id)
         raise HTTPException(500, f"Error en agente evaluador: {e}")
 
     # Evaluar la empresa y rol antes de armar result
@@ -908,17 +869,7 @@ Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
         result["estado"]  = "en_proceso"
     else:
         candidato_nombre = result["perfil"]
-        notify_make({
-            "candidato": candidato_nombre,
-            "company":   empresa_r,
-            "role":      rol_r,
-            "score":     fit_score,
-            "grado":     grado,
-            "perfil":    candidato_nombre,
-            "status":    "descartado",
-            "pdf_url":   "N/A (Descartado por Score Bajo)",
-            "mensaje":   f"[{candidato_nombre}] Oferta de {empresa_r} — {rol_r} descartada por score bajo ({fit_score}/{MIN_SCORE}). El Agente Sastre no generará PDF automático."
-        })
+        print(f"[orchestrator] Oferta descartada para {candidato_nombre}: {empresa_r} — {rol_r}. Score {fit_score}/{MIN_SCORE}.")
         result["mensaje"] = f"Score {fit_score}/5 ({grado}). Oferta {empresa_r} — {rol_r} descartada."
         result["estado"]  = "descartado"
 
@@ -1108,3 +1059,72 @@ def backend_status_info():
         "version": "2.0.0",
         "host":    socket.gethostname()
     }
+
+
+# ── POST generar-cv-principal (descarga CV base con diseño premium) ───
+class GenerarCVPrincipalRequest(BaseModel):
+    perfil_id: str
+    con_foto:  bool = True
+    idioma:    str  = "ES"
+
+@app.post("/career/generar-cv-principal")
+def generar_cv_principal(req: GenerarCVPrincipalRequest):
+    """
+    Genera el CV principal del candidato con el diseño premium (agente-hr-diseno).
+    Devuelve una URL firmada de Supabase Storage válida 30 minutos.
+    El archivo se elimina del bucket automáticamente tras 30 minutos.
+    No requiere oferta de trabajo — es el CV base listo para descargar.
+    """
+    from scripts.supabase_client import (
+        get_perfil_by_id, upload_file_to_storage,
+        get_storage_signed_url, delete_storage_file
+    )
+
+    perfil = get_perfil_by_id(req.perfil_id)
+    if not perfil:
+        raise HTTPException(404, f"Perfil {req.perfil_id} no encontrado")
+
+    datos_json_raw = perfil.get("datos_json") or {}
+    if isinstance(datos_json_raw, str):
+        try:
+            datos_json_raw = json.loads(datos_json_raw)
+        except Exception:
+            datos_json_raw = {}
+
+    # Verificar que hay CV para generar
+    if not perfil.get("cv_markdown") and not datos_json_raw.get("resumen"):
+        raise HTTPException(400, "No hay CV cargado. Sube tu PDF en Mi CV primero.")
+
+    foto_modo = "con_foto" if req.con_foto else "sin_foto"
+    foto_url  = datos_json_raw.get("foto_url") if req.con_foto else None
+
+    nombre = f"{perfil.get('nombre', '')} {perfil.get('apellido', '')}".strip()
+
+    try:
+        # Llamar al agente de diseño de forma sincrona
+        diseno_resp = call_agent(DISENO_URL, "/generar-cv-html", {
+            "perfil_id":     req.perfil_id,
+            "foto_modo":     foto_modo,
+            "foto_url":      foto_url,
+            "idioma":        req.idioma,
+        }, timeout=180)
+
+        # El agente devuelve la URL firmada directamente si ya subio el PDF a Storage
+        pdf_url = diseno_resp.get("pdf_url") or diseno_resp.get("signed_url") or ""
+
+        if not pdf_url:
+            raise HTTPException(500, "El agente de diseño no devolvió una URL de PDF.")
+
+        return {
+            "status":   "ok",
+            "perfil":   nombre,
+            "pdf_url":  pdf_url,
+            "expira_en": "30 minutos",
+            "mensaje":  f"CV de {nombre} generado correctamente. La URL expira en 30 minutos.",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error("generar_cv_principal", str(e), extra={"perfil_id": req.perfil_id})
+        raise HTTPException(500, f"Error generando CV: {e}")

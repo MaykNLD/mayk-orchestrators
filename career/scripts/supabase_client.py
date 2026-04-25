@@ -260,9 +260,13 @@ def delete_storage_file(bucket: str, path: str) -> bool:
 
 
 def log_error(context: str, error: str, app_id: Optional[str] = None, extra: Optional[dict] = None) -> dict:
-    """Persiste un error critico del pipeline en Supabase (tabla career_errores).
-    No lanza excepciones — si falla el log, no debe romper el flujo principal.
+    """Persiste un error critico del pipeline en Supabase (tabla career_errores)
+    Y envia una alerta al webhook de Make.com para notificacion proactiva.
+    No lanza excepciones — si falla el log o el webhook, no rompe el flujo principal.
     """
+    import datetime
+
+    result = {}
     try:
         data = {
             "context":  context,
@@ -270,7 +274,34 @@ def log_error(context: str, error: str, app_id: Optional[str] = None, extra: Opt
             "app_id":   app_id,
             "extra":    extra or {},
         }
-        return _post("career_errores", data)
+        result = _post("career_errores", data)
     except Exception as e:
         print(f"[supabase_client] No se pudo loguear error en Supabase: {e}")
-        return {}
+
+    # ── Alerta proactiva a Make.com ────────────────────────────────────
+    # Si MAKE_WEBHOOK_URL está definida, notificar el error para Telegram/Email.
+    # Se usa un payload de tipo ERROR_CRITICO para que Make.com lo distinga
+    # de cualquier otro mensaje y ejecute el escenario de alerta.
+    try:
+        make_url = os.environ.get("MAKE_WEBHOOK_URL", "")
+        if make_url:
+            import urllib.request as _ureq
+            payload = {
+                "tipo":          "ERROR_CRITICO",
+                "contexto":      context,
+                "mensaje_error": error[:500],  # resumen para Telegram
+                "app_id":        app_id or "N/A",
+                "timestamp":     datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "extra":         str(extra or {}),
+            }
+            body = json.dumps(payload).encode()
+            req  = _ureq.Request(
+                make_url, data=body,
+                headers={"Content-Type": "application/json"}, method="POST"
+            )
+            _ureq.urlopen(req, timeout=8)
+            print(f"[supabase_client] Alerta de error enviada a Make.com: {context}")
+    except Exception as e_make:
+        print(f"[supabase_client] No se pudo enviar alerta a Make.com: {e_make}")
+
+    return result
