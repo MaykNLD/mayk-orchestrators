@@ -257,87 +257,144 @@ def worker_polling_loop():
             from scripts.supabase_client import (
                 get_pending_cv_download_requests,
                 update_cv_download_request,
-                get_storage_signed_url,
+                update_perfil as _upd_perfil,
             )
             pending_downloads = get_pending_cv_download_requests(limit=2)
             for dl_job in pending_downloads:
                 job_id    = dl_job.get("id")
                 perfil_id = dl_job.get("perfil_id")
-                con_foto  = dl_job.get("con_foto", True)
-                idioma    = dl_job.get("idioma", "ES")
                 if not job_id or not perfil_id:
                     continue
-                print(f"[orchestrator-worker] CV download request: {job_id}")
+
+                # Leer opciones con fallback seguro (Supabase puede devolver None)
+                con_foto = dl_job.get("con_foto")
+                if con_foto is None:
+                    con_foto = True
+                idioma = (dl_job.get("idioma") or "ES").strip() or "ES"
+
+                print(f"[orchestrator-worker] CV download request: {job_id} perfil={perfil_id}")
                 update_cv_download_request(job_id, {"status": "processing"})
+
                 try:
                     perfil_dl = get_perfil_by_id(perfil_id)
                     if not perfil_dl:
-                        raise ValueError(f"Perfil {perfil_id} no encontrado")
+                        raise ValueError(f"Perfil {perfil_id} no encontrado en la BD")
 
-                    datos_dl = perfil_dl.get("datos_json") or {}
-                    if isinstance(datos_dl, str):
-                        try: datos_dl = json.loads(datos_dl)
-                        except: datos_dl = {}
+                    # ── Parsear datos_json de forma 100% segura ──
+                    raw_datos = perfil_dl.get("datos_json")
+                    if isinstance(raw_datos, str):
+                        try:
+                            datos_dl = json.loads(raw_datos)
+                        except Exception:
+                            datos_dl = {}
+                    elif isinstance(raw_datos, dict):
+                        datos_dl = raw_datos
+                    else:
+                        datos_dl = {}
 
-                    # El agente-hr-diseno requiere cv_markdown en el perfil.
-                    # Si el usuario importo su CV via PDF, cv_markdown puede estar vacio
-                    # pero datos_json tiene los datos estructurados. Construimos el texto.
-                    cv_markdown = perfil_dl.get("cv_markdown", "").strip()
-                    if not cv_markdown and datos_dl:
-                        nombre_dl = f"{perfil_dl.get('nombre', '')} {perfil_dl.get('apellido', '')}".strip()
-                        cv_markdown = f"""Candidato: {nombre_dl}
-Email: {perfil_dl.get('email', '')}
-Telefono: {datos_dl.get('telefono', '')}
-Resumen: {datos_dl.get('resumen', '')}
-Habilidades: {', '.join(datos_dl.get('habilidades', []))}
-Experiencia:
-{json.dumps(datos_dl.get('experiencia', []), ensure_ascii=False, indent=2)}
-Educacion:
-{json.dumps(datos_dl.get('educacion', []), ensure_ascii=False, indent=2)}
-Certificaciones:
-{json.dumps(datos_dl.get('certificaciones', []), ensure_ascii=False, indent=2)}
-Idiomas:
-{json.dumps(datos_dl.get('idiomas', []), ensure_ascii=False, indent=2)}"""
+                    # ── Helper: extraer campo como string, nunca None ──
+                    def _s(v):
+                        return str(v).strip() if v is not None else ""
 
-                        # Guardar cv_markdown en Supabase para que el agente lo encuentre
-                        from scripts.supabase_client import update_perfil as _update_perfil
-                        _update_perfil(perfil_id, {"cv_markdown": cv_markdown})
-                        print(f"[orchestrator-worker] cv_markdown construido desde datos_json para {perfil_id}")
+                    # ── Helper: extraer campo como lista, nunca None ──
+                    def _l(v):
+                        if isinstance(v, list): return v
+                        if v is None: return []
+                        try: return list(v)
+                        except: return []
+
+                    # ── Construir/recuperar cv_markdown ──
+                    # El agente-hr-diseno lee cv_markdown del perfil en Supabase.
+                    # Si es None o vacio (perfil importado via PDF), lo construimos
+                    # desde datos_json y lo persistimos para que el agente lo encuentre.
+                    cv_markdown = _s(perfil_dl.get("cv_markdown"))
 
                     if not cv_markdown:
-                        raise ValueError("El perfil no tiene cv_markdown ni datos_json. Sube el CV primero.")
+                        if not datos_dl:
+                            raise ValueError(
+                                "El perfil no tiene cv_markdown ni datos_json. "
+                                "Sube tu CV en PDF primero e importa los datos."
+                            )
+                        nombre_dl = (
+                            _s(perfil_dl.get("nombre")) + " " +
+                            _s(perfil_dl.get("apellido"))
+                        ).strip()
 
+                        habilidades_str = ", ".join(
+                            str(h) for h in _l(datos_dl.get("habilidades")) if h
+                        )
+
+                        def _json_safe(v):
+                            return json.dumps(_l(v), ensure_ascii=False, indent=2)
+
+                        cv_markdown = (
+                            f"Candidato: {nombre_dl}\n"
+                            f"Email: {_s(perfil_dl.get('email'))}\n"
+                            f"Telefono: {_s(datos_dl.get('telefono'))}\n"
+                            f"Resumen: {_s(datos_dl.get('resumen'))}\n"
+                            f"Habilidades: {habilidades_str}\n"
+                            f"Experiencia:\n{_json_safe(datos_dl.get('experiencia'))}\n"
+                            f"Educacion:\n{_json_safe(datos_dl.get('educacion'))}\n"
+                            f"Certificaciones:\n{_json_safe(datos_dl.get('certificaciones'))}\n"
+                            f"Idiomas:\n{_json_safe(datos_dl.get('idiomas'))}"
+                        )
+
+                        # Persistir para que el agente lo encuentre directamente
+                        try:
+                            _upd_perfil(perfil_id, {"cv_markdown": cv_markdown})
+                            print(f"[orchestrator-worker] cv_markdown generado y persistido para {perfil_id}")
+                        except Exception as e_save:
+                            print(f"[orchestrator-worker] Advertencia: no se pudo persistir cv_markdown: {e_save}")
+                            # Continuamos igual — el agente leerá el perfil actualizado en el siguiente intento
+
+                    # ── Preparar foto ──
                     foto_modo = "con_foto" if con_foto else "sin_foto"
-                    foto_url  = datos_dl.get("foto_url") if con_foto else None
+                    foto_url  = _s(datos_dl.get("foto_url")) if con_foto else None
+                    if con_foto and not foto_url:
+                        # No hay foto cargada — degradar a sin_foto sin fallar
+                        foto_modo = "sin_foto"
+                        foto_url  = None
+                        print(f"[orchestrator-worker] Aviso: con_foto=True pero foto_url vacia. Usando sin_foto.")
 
+                    # ── Llamar al agente de diseño ──
                     diseno_resp = call_agent(DISENO_URL, "/generar-cv-html", {
                         "perfil_id": perfil_id,
                         "foto_modo": foto_modo,
-                        "foto_url":  foto_url,
+                        "foto_url":  foto_url or None,
                         "idioma":    idioma,
                     }, timeout=180)
 
+                    # El agente puede devolver pdf_url o signed_url
                     signed_url = (
-                        diseno_resp.get("pdf_url") or
-                        diseno_resp.get("signed_url") or ""
+                        _s(diseno_resp.get("pdf_url")) or
+                        _s(diseno_resp.get("signed_url")) or ""
                     )
                     if not signed_url:
-                        raise ValueError("El agente de diseno no devolvio URL de PDF")
+                        # El agente devolvio html pero no PDF (WeasyPrint no disponible?)
+                        raise ValueError(
+                            "El agente de diseno no devolvio URL de PDF. "
+                            "Verifica que WeasyPrint este instalado en el contenedor."
+                        )
 
                     update_cv_download_request(job_id, {
                         "status":     "done",
                         "signed_url": signed_url,
                     })
-                    print(f"[orchestrator-worker] CV download completado: {job_id}")
+                    print(f"[orchestrator-worker] CV download completado OK: {job_id} → {signed_url[:60]}...")
+
                 except Exception as e:
                     err = str(e)
-                    print(f"[orchestrator-worker] Error CV download {job_id}: {err}")
-                    update_cv_download_request(job_id, {
-                        "status":    "error",
-                        "error_msg": err[:500],
-                    })
+                    print(f"[orchestrator-worker] ERROR CV download {job_id}: {err}")
+                    try:
+                        update_cv_download_request(job_id, {
+                            "status":    "error",
+                            "error_msg": err[:500],
+                        })
+                    except Exception as e_upd:
+                        print(f"[orchestrator-worker] No se pudo actualizar job a error: {e_upd}")
                     log_error("worker_cv_download", err,
                               extra={"job_id": job_id, "perfil_id": perfil_id})
+
 
         except Exception as e:
             print(f"[orchestrator-worker] Error en el loop principal: {e}")
