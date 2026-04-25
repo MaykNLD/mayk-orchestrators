@@ -40,13 +40,13 @@ from scripts.supabase_client import get_evaluando_applications, update_applicati
 
 def _extract_cv_from_pdf(perfil: dict) -> dict:
     """
-    Llama al agente RRHH para extraer datos estructurados del texto del CV
-    y devuelve un dict con la estructura de datos_json del dashboard.
+    Llama al agente RRHH para extraer datos estructurados del CV
+    y escribe datos_json en perfil_base con el formato que usa el dashboard.
     """
     perfil_id = perfil.get("id", "?")
     print(f"[cv-extractor] Iniciando extraccion para perfil {perfil_id}")
 
-    # Intentar obtener el texto del CV desde cv_markdown o desde el PDF en datos_json
+    # Obtener texto del CV desde cv_markdown o desde datos_json
     cv_texto = (perfil.get("cv_markdown") or "").strip()
     datos_json = perfil.get("datos_json") or {}
     if isinstance(datos_json, str):
@@ -60,7 +60,6 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
             req = urllib.request.Request(pdf_url, headers={"User-Agent": "Career-Ops/2.0"})
             with urllib.request.urlopen(req, timeout=30) as r:
                 pdf_bytes = r.read()
-            # Extraer texto del PDF usando pdfminer si disponible, sino texto plano
             try:
                 from io import BytesIO
                 from pdfminer.high_level import extract_text as pdf_extract
@@ -76,42 +75,40 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
         update_perfil(perfil_id, {"cv_extraction_pending": False})
         return {}
 
-    # Llamar al agente RRHH para estructurar el CV
+    # Llamar al agente RRHH con el endpoint correcto: /analizar-cv
     try:
-        rrhh_resp = call_agent(RRHH_URL, "/execute", {
-            "cv_texto": cv_texto[:7000],
+        rrhh_resp = call_agent(RRHH_URL, "/analizar-cv", {
             "perfil_id": perfil_id,
-            "idioma": perfil.get("idioma", "ES"),
-            "foto_modo": "sin_foto"
+            "cv_texto":  cv_texto[:7000],
+            "idioma":    perfil.get("idioma", "ES"),
         }, timeout=180)
-        raw_result = rrhh_resp.get("result", "{}")
-        if isinstance(raw_result, str):
-            extracted = json.loads(raw_result)
-        else:
-            extracted = raw_result
     except Exception as e:
         print(f"[cv-extractor] Error llamando al agente RRHH: {e}")
         update_perfil(perfil_id, {"cv_extraction_pending": False})
         return {}
 
-    # Mapear la respuesta del RRHH al formato datos_json del dashboard
+    # Mapear usando los campos REALES que devuelve el agente RRHH
+    skills_clave = rrhh_resp.get("skills_clave", [])
+    # Preservar foto y pdf_url ya guardados
     nuevo_datos = {
-        "resumen":        extracted.get("resumen") or extracted.get("perfil") or "",
-        "telefono":       extracted.get("telefono") or datos_json.get("telefono", ""),
-        "foto_url":       datos_json.get("foto_url", ""),
-        "cv_pdf_url":     datos_json.get("cv_pdf_url", ""),
-        "habilidades":    extracted.get("habilidades") or extracted.get("skills") or datos_json.get("habilidades", []),
-        "experiencia":    extracted.get("experiencia") or extracted.get("experience") or datos_json.get("experiencia", []),
-        "educacion":      extracted.get("educacion") or extracted.get("education") or datos_json.get("educacion", []),
-        "certificaciones":extracted.get("certificaciones") or extracted.get("certifications") or datos_json.get("certificaciones", []),
-        "idiomas":        extracted.get("idiomas") or extracted.get("languages") or datos_json.get("idiomas", []),
+        "foto_url":        datos_json.get("foto_url", ""),
+        "cv_pdf_url":      datos_json.get("cv_pdf_url", ""),
+        "telefono":        datos_json.get("telefono", ""),
+        "resumen":         rrhh_resp.get("resumen_ejecutivo", "") or rrhh_resp.get("objetivo_profesional", ""),
+        "habilidades":     skills_clave if isinstance(skills_clave, list) else [],
+        "experiencia":     rrhh_resp.get("experiencia", datos_json.get("experiencia", [])),
+        "educacion":       rrhh_resp.get("educacion",   datos_json.get("educacion",   [])),
+        "certificaciones": rrhh_resp.get("certificaciones", datos_json.get("certificaciones", [])),
+        "idiomas":         rrhh_resp.get("idiomas",     datos_json.get("idiomas",     [])),
     }
 
     update_perfil(perfil_id, {
-        "datos_json": nuevo_datos,
-        "cv_extraction_pending": False
+        "datos_json":             json.dumps(nuevo_datos, ensure_ascii=False),
+        "cv_extraction_pending":  False,
+        # También actualizar cv_markdown si el agente devuelve uno mejorado
+        **({"cv_markdown": rrhh_resp["cv_mejorado"]} if rrhh_resp.get("cv_mejorado") else {}),
     })
-    print(f"[cv-extractor] ✅ datos_json actualizado para perfil {perfil_id}")
+    print(f"[cv-extractor] datos_json actualizado para perfil {perfil_id}")
     return nuevo_datos
 
 
