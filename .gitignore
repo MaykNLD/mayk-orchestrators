@@ -41,3 +41,4 @@ career/data/scan-history.tsv
 career/output/
 career/perfiles-candidatos/
 career/.env
+token.txt
