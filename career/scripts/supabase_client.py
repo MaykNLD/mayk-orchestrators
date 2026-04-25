@@ -259,6 +259,29 @@ def delete_storage_file(bucket: str, path: str) -> bool:
         return False
 
 
+# ─── CV DOWNLOAD REQUESTS (Job Queue) ───────────────────────────────────────
+
+def create_cv_download_request(perfil_id: str, con_foto: bool = True, idioma: str = "ES") -> dict:
+    """Crea un job de descarga de CV. El Worker lo procesará en el siguiente ciclo."""
+    return _post("cv_download_requests", {
+        "perfil_id": perfil_id,
+        "con_foto":  con_foto,
+        "idioma":    idioma,
+        "status":    "pending",
+    })
+
+def get_pending_cv_download_requests(limit: int = 3) -> list:
+    """Obtiene los jobs de descarga pendientes ordenados por antigüedad."""
+    return _get("cv_download_requests",
+                f"status=eq.pending&order=created_at.asc&limit={limit}")
+
+def update_cv_download_request(request_id: str, data: dict) -> dict:
+    """Actualiza el estado del job (processing / done / error + signed_url)."""
+    import datetime
+    data["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+    return _patch("cv_download_requests", "id", request_id, data)
+
+
 def log_error(context: str, error: str, app_id: Optional[str] = None, extra: Optional[dict] = None) -> dict:
     """Persiste un error critico del pipeline en Supabase (tabla career_errores)
     Y envia una alerta al webhook de Make.com para notificacion proactiva.

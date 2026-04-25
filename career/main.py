@@ -253,9 +253,68 @@ def worker_polling_loop():
                     print(f"[cv-extractor] ❌ Error extrayendo CV para {perfil_row.get('id')}: {e}")
                     update_perfil(perfil_row.get("id"), {"cv_extraction_pending": False})
 
+            # ── Job tipo 3: Generacion de CV principal para descarga ──
+            from scripts.supabase_client import (
+                get_pending_cv_download_requests,
+                update_cv_download_request,
+                get_storage_signed_url,
+            )
+            pending_downloads = get_pending_cv_download_requests(limit=2)
+            for dl_job in pending_downloads:
+                job_id    = dl_job.get("id")
+                perfil_id = dl_job.get("perfil_id")
+                con_foto  = dl_job.get("con_foto", True)
+                idioma    = dl_job.get("idioma", "ES")
+                if not job_id or not perfil_id:
+                    continue
+                print(f"[orchestrator-worker] CV download request: {job_id}")
+                update_cv_download_request(job_id, {"status": "processing"})
+                try:
+                    perfil_dl = get_perfil_by_id(perfil_id)
+                    if not perfil_dl:
+                        raise ValueError(f"Perfil {perfil_id} no encontrado")
+
+                    datos_dl = perfil_dl.get("datos_json") or {}
+                    if isinstance(datos_dl, str):
+                        try: datos_dl = json.loads(datos_dl)
+                        except: datos_dl = {}
+
+                    foto_modo = "con_foto" if con_foto else "sin_foto"
+                    foto_url  = datos_dl.get("foto_url") if con_foto else None
+
+                    diseno_resp = call_agent(DISENO_URL, "/generar-cv-html", {
+                        "perfil_id": perfil_id,
+                        "foto_modo": foto_modo,
+                        "foto_url":  foto_url,
+                        "idioma":    idioma,
+                    }, timeout=180)
+
+                    signed_url = (
+                        diseno_resp.get("pdf_url") or
+                        diseno_resp.get("signed_url") or ""
+                    )
+                    if not signed_url:
+                        raise ValueError("El agente de diseno no devolvio URL de PDF")
+
+                    update_cv_download_request(job_id, {
+                        "status":     "done",
+                        "signed_url": signed_url,
+                    })
+                    print(f"[orchestrator-worker] CV download completado: {job_id}")
+                except Exception as e:
+                    err = str(e)
+                    print(f"[orchestrator-worker] Error CV download {job_id}: {err}")
+                    update_cv_download_request(job_id, {
+                        "status":    "error",
+                        "error_msg": err[:500],
+                    })
+                    log_error("worker_cv_download", err,
+                              extra={"job_id": job_id, "perfil_id": perfil_id})
+
         except Exception as e:
             print(f"[orchestrator-worker] Error en el loop principal: {e}")
         time.sleep(5)
+
 
 @app.on_event("startup")
 def start_background_worker():
