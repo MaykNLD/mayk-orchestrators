@@ -37,8 +37,11 @@ app = FastAPI(title="Career-Ops Orchestrator", version="2.0.0")
 # ── Worker imports ────────────────────────────────────────────────────
 from scripts.supabase_client import (
     get_evaluando_applications, update_heartbeat,
-    get_pending_cv_extractions, update_perfil
+    get_pending_cv_extractions, update_perfil,
+    get_todays_processed_count
 )
+
+MAX_APPS_PER_DAY = int(os.environ.get("MAX_APPS_PER_DAY", "10"))  # limite diario por usuario
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
@@ -215,21 +218,30 @@ def worker_polling_loop():
             # ── Job tipo 1: Candidaturas a evaluar ──
             apps = get_evaluando_applications(limit=3)
             for app_db in apps:
-                app_id = app_db.get("id")
+                app_id    = app_db.get("id")
+                perfil_id = app_db.get("perfil_id")
                 if not app_id: continue
-                print(f"\n[orchestrator-worker] 🚀 Candidatura: {app_id}")
+
+                # Rate limiting diario por usuario
+                daily_count = get_todays_processed_count(perfil_id) if perfil_id else 0
+                if daily_count >= MAX_APPS_PER_DAY:
+                    print(f"[orchestrator-worker] Limite diario alcanzado para perfil {perfil_id} ({daily_count}/{MAX_APPS_PER_DAY}). Saltando.")
+                    update_application(app_id, {"status": "pendiente", "notas": f"Limite diario de {MAX_APPS_PER_DAY} solicitudes alcanzado. Reintentara manana."})
+                    continue
+
+                print(f"\n[orchestrator-worker] Candidatura: {app_id} [{daily_count+1}/{MAX_APPS_PER_DAY} hoy]")
                 update_application(app_id, {"status": "procesando_ia"})
                 try:
                     req = EvaluarRequest(
                         url_oferta=app_db.get("url", ""),
-                        perfil_id=app_db.get("perfil_id"),
+                        perfil_id=perfil_id,
                         app_id=app_id,
                         forzar=True
                     )
                     evaluar(req)
-                    print(f"[orchestrator-worker] ✅ Candidatura completada: {app_id}")
+                    print(f"[orchestrator-worker] Candidatura completada: {app_id}")
                 except Exception as e:
-                    print(f"[orchestrator-worker] ❌ Error candidatura {app_id}: {e}")
+                    print(f"[orchestrator-worker] Error candidatura {app_id}: {e}")
                     update_application(app_id, {"status": "error_ia", "notas": str(e)})
 
             # ── Job tipo 2: Extraccion de CV desde PDF ──

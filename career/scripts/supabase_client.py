@@ -131,6 +131,24 @@ def get_evaluando_applications(limit: int = 5) -> list:
     """Obtiene las candidaturas que el dashboard marcó para ser procesadas."""
     return _get("aplicaciones_career", f"status=eq.evaluando&order=created_at.asc&limit={limit}")
 
+def get_todays_processed_count(perfil_id: str) -> int:
+    """
+    Cuenta cuántas candidaturas de ese perfil han sido procesadas hoy
+    (excluyendo pendiente/evaluando — solo las que ya pasaron por la IA).
+    Usado para rate limiting diario por usuario.
+    """
+    import datetime
+    today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    results = _get(
+        "aplicaciones_career",
+        f"perfil_id=eq.{perfil_id}"
+        f"&status=not.in.(pendiente,evaluando)"
+        f"&created_at=gte.{today}T00:00:00Z"
+        f"&select=id"
+    )
+    return len(results)
+
+
 def update_heartbeat() -> None:
     """Actualiza el heartbeat del backend en Supabase para que el dashboard sepa que está vivo."""
     import datetime
