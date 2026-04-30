@@ -181,17 +181,22 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
     perfil_id = perfil.get("id", "?")
     print(f"[cv-extractor] Iniciando extraccion para perfil {perfil_id}")
 
-    # 1. Obtener el texto del CV
-    cv_texto = (perfil.get("cv_markdown") or "").strip()
+    # 1. Obtener datos actuales del perfil
     datos_json = perfil.get("datos_json") or {}
     if isinstance(datos_json, str):
         try: datos_json = json.loads(datos_json)
         except: datos_json = {}
 
-    # 2. Si no hay cv_markdown suficiente, intentar descargar el PDF
+    # 2. SIEMPRE intentar descargar el PDF si hay url (ignorar cv_markdown anterior).
+    # Bug anterior: solo descargaba si cv_markdown < 500 chars — si ya existia texto
+    # de una extraccion previa, el PDF nuevo era ignorado completamente.
+    # Fix: el PDF tiene PRIORIDAD absoluta. cv_markdown es solo fallback sin PDF.
     pdf_url = (datos_json.get("cv_pdf_url") or "").strip()
-    if pdf_url and len(cv_texto) < 500:
+    cv_texto = ""
+
+    if pdf_url:
         try:
+            print(f"[cv-extractor] Descargando PDF desde: {pdf_url[:80]}...")
             req = urllib.request.Request(pdf_url, headers={"User-Agent": "Career-Ops/2.0"})
             with urllib.request.urlopen(req, timeout=30) as r:
                 pdf_bytes = r.read()
@@ -204,14 +209,20 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
                 # Critico para PDFs de dos columnas — evita mezclar sidebar con experiencia.
                 laparams = LAParams(boxes_flow=None)
                 cv_texto = pdf_extract(BytesIO(pdf_bytes), laparams=laparams)[:12000]
-                print(f"[cv-extractor] Texto extraido: {len(cv_texto)} chars")
+                print(f"[cv-extractor] Texto extraido del PDF: {len(cv_texto)} chars")
                 print(f"[cv-extractor] Preview texto (500c): {cv_texto[:500]!r}")
             except ImportError:
-                print("[cv-extractor] pdfminer no disponible")
+                print("[cv-extractor] pdfminer no disponible — usando cv_markdown como fallback")
             except Exception as e_pdf:
                 print(f"[cv-extractor] Error leyendo PDF con pdfminer: {e_pdf}")
         except Exception as e:
             print(f"[cv-extractor] No se pudo descargar el PDF: {e}")
+
+    # Fallback: si no hay PDF o fallo la descarga, usar cv_markdown existente
+    if not cv_texto:
+        cv_texto = (perfil.get("cv_markdown") or "").strip()
+        if cv_texto:
+            print(f"[cv-extractor] Usando cv_markdown como fallback: {len(cv_texto)} chars")
 
     if len(cv_texto) < 50:
         print(f"[cv-extractor] Sin texto suficiente. Abortando.")
