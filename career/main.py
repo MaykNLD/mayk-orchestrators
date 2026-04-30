@@ -355,14 +355,15 @@ def _build_cv_html(perfil: dict, datos_json: dict,
     def dct(v):   return v if isinstance(v, dict) else {}
 
     nombre   = f"{esc(perfil.get('nombre') or '')} {esc(perfil.get('apellido') or '')}".strip()
-    email    = esc(perfil.get("email") or "")
     c        = dct(datos_json.get("contacto"))
-    telefono = esc(perfil.get("telefono") or c.get("telefono") or "")
+    email    = esc(c.get("email") or perfil.get("email") or "")  # email del CV tiene prioridad
+    telefono = esc(c.get("telefono") or perfil.get("telefono") or "")
     ciudad   = esc(c.get("ciudad") or "")
     pais     = esc(c.get("pais") or "")
     linkedin = esc(perfil.get("linkedin") or c.get("linkedin") or "")
-    github   = esc(perfil.get("github_url") or c.get("github") or "")
-    web      = esc(c.get("web") or "")
+    github   = esc(c.get("github") or perfil.get("github_url") or "")
+    web      = esc(perfil.get("portfolio_url") or c.get("web") or "")
+    link_extra = esc(c.get("link_extra") or "")
     ubicacion= ", ".join(filter(None, [ciudad, pais]))
 
     resumen       = esc(datos_json.get("resumen") or "")
@@ -400,6 +401,7 @@ def _build_cv_html(perfil: dict, datos_json: dict,
         ci("🔗", "LinkedIn", linkedin) if linkedin else "",
         ci("⚡", "GitHub",   github)   if github   else "",
         ci("🌐", web, web)             if web      else "",
+        ci("🔗", "Enlace",  link_extra, link_extra) if link_extra else "",
     ])
 
     # Sección helper
