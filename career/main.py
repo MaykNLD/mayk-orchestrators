@@ -375,13 +375,17 @@ def _build_cv_html(perfil: dict, datos_json: dict,
     idiomas_lst   = lst(datos_json.get("idiomas"))
     stack         = dct(datos_json.get("stack_tecnico"))
 
-    # Subtítulo: primeras techs del stack o habilidades
-    all_techs = []
-    for cat in ["backend","frontend","datos","infra","ia_llm"]:
-        all_techs.extend(lst(stack.get(cat)))
-    if not all_techs:
-        all_techs = habilidades
-    subtitulo = " · ".join(esc(t) for t in all_techs[:6])
+    # Subtítulo: personalizado tiene prioridad; si vacío → auto desde skills
+    subtitulo_custom = (datos_json.get("subtitulo_personalizado") or "").strip()
+    if subtitulo_custom:
+        subtitulo = esc(subtitulo_custom)
+    else:
+        all_techs = []
+        for cat in ["backend","frontend","datos","infra","ia_llm"]:
+            all_techs.extend(lst(stack.get(cat)))
+        if not all_techs:
+            all_techs = habilidades
+        subtitulo = " · ".join(esc(t) for t in all_techs[:6])
 
     # Foto
     foto_tag = ""
