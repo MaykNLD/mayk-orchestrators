@@ -47,44 +47,76 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 
 CV_EXTRACTION_PROMPT = """
-Eres un experto en recursos humanos. Extrae TODA la informacion del siguiente CV y devuelve SOLO un JSON valido, sin texto extra, sin markdown, sin explicaciones.
+Eres un extractor de datos de CVs. Tu UNICA funcion es EXTRAER literalmente lo que aparece en el texto del CV.
 
-Estructura EXACTA que debes devolver:
+REGLAS ABSOLUTAS — violarlas invalida tu respuesta:
+1. NUNCA inventes, deduzcas, supongas ni completes datos. Si un dato no aparece literalmente en el CV, usa "" o [].
+2. NUNCA reescribas ni "mejores" el texto. Copia tal cual o resume MUY brevemente lo que SÍ dice.
+3. NUNCA añadas empresas, fechas, tecnologias, idiomas, proyectos ni cualquier dato que no este en el CV.
+4. Si un campo no tiene informacion en el CV, devuelvelo como "" o []. Nunca inventes un valor plausible.
+5. Devuelve SOLO el JSON. Sin texto previo, sin explicaciones, sin markdown, sin ```json```.
+
+Estructura JSON EXACTA que debes devolver (no cambies los nombres de los campos):
 {
-  "resumen": "Resumen profesional de 2-4 frases",
-  "habilidades": ["habilidad1", "habilidad2", ...],
+  "resumen": "Copia o resume en 1-3 frases SOLO lo que dice el CV sobre el perfil profesional. Si no hay resumen en el CV, usa ''.",
+  "contacto": {
+    "telefono": "numero de telefono tal como aparece en el CV, o ''",
+    "ciudad": "ciudad o localidad tal como aparece, o ''",
+    "pais": "pais tal como aparece, o ''",
+    "linkedin": "URL o perfil de LinkedIn tal como aparece, o ''",
+    "github": "URL o perfil de GitHub tal como aparece, o ''",
+    "web": "pagina web o portfolio tal como aparece, o ''"
+  },
+  "habilidades": ["habilidad exactamente como aparece en el CV", ...],
+  "stack_tecnico": {
+    "backend":   ["tecnologias backend exactamente como aparecen", ...],
+    "frontend":  ["tecnologias frontend exactamente como aparecen", ...],
+    "datos":     ["bases de datos, data tools exactamente como aparecen", ...],
+    "infra":     ["Docker, CI/CD, cloud, devops exactamente como aparecen", ...],
+    "ia_llm":   ["LLMs, ML frameworks exactamente como aparecen", ...],
+    "otros":     ["cualquier otra tecnologia o herramienta que no encaje arriba", ...]
+  },
   "experiencia": [
     {
-      "empresa": "Nombre empresa",
-      "puesto": "Titulo del puesto",
-      "fecha_inicio": "MM/YYYY o YYYY",
-      "fecha_fin": "MM/YYYY o Presente",
-      "descripcion": "Descripcion de responsabilidades y logros"
+      "empresa":      "nombre exacto de la empresa tal como aparece en el CV",
+      "puesto":       "titulo exacto del puesto tal como aparece",
+      "fecha_inicio": "fecha exacta como aparece o ''",
+      "fecha_fin":    "fecha exacta como aparece, o 'Presente' si sigue ahi, o ''",
+      "descripcion":  "descripcion EXACTA o resumen muy fiel de lo que dice el CV. NUNCA añadas logros que no aparezcan."
+    }
+  ],
+  "proyectos": [
+    {
+      "nombre":        "nombre exacto del proyecto tal como aparece",
+      "descripcion":   "descripcion EXACTA o resumen muy fiel de lo que dice el CV",
+      "tecnologias":   ["tecnologias exactamente como aparecen en el CV para este proyecto"],
+      "url":           "URL del proyecto tal como aparece, o ''",
+      "fecha":         "fecha tal como aparece, o ''"
     }
   ],
   "educacion": [
     {
-      "institucion": "Nombre universidad/instituto",
-      "titulo": "Titulo obtenido",
-      "fecha": "YYYY o YYYY-YYYY"
+      "institucion": "nombre exacto de la institucion",
+      "titulo":      "titulo exacto obtenido",
+      "fecha":       "fecha o rango exacto como aparece"
     }
   ],
   "certificaciones": [
     {
-      "nombre": "Nombre certificacion",
-      "emisor": "Organizacion emisora",
-      "fecha": "YYYY"
+      "nombre": "nombre exacto de la certificacion",
+      "emisor": "organizacion emisora exacta o ''",
+      "fecha":  "fecha exacta o ''"
     }
   ],
   "idiomas": [
     {
-      "idioma": "Nombre idioma",
-      "nivel": "Nativo|Avanzado|Intermedio|Basico"
+      "idioma": "nombre exacto del idioma",
+      "nivel":  "nivel exacto como aparece en el CV (Nativo, C1, B2, Avanzado, etc.)"
     }
   ]
 }
 
-Si no hay datos para un campo, usa lista vacia [] o string vacio "". NO inventes datos.
+RECUERDA: si algo no aparece en el CV, el valor es "" o []. Nunca inventes.
 
 CV A EXTRAER:
 {cv_texto}
@@ -97,8 +129,8 @@ def _call_openrouter(prompt: str, model: str = "anthropic/claude-3-haiku") -> st
     data = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 3000,
-        "temperature": 0.1,
+        "max_tokens": 4000,
+        "temperature": 0.0,  # Maxima literalidad, minima creatividad
     }).encode()
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -117,9 +149,10 @@ def _call_openrouter(prompt: str, model: str = "anthropic/claude-3-haiku") -> st
 
 def _extract_cv_from_pdf(perfil: dict) -> dict:
     """
-    Extrae datos estructurados del CV usando Claude Haiku directamente via OpenRouter.
-    Rellena completamente datos_json: resumen, habilidades, experiencia, educacion,
-    certificaciones e idiomas.
+    Extrae datos estructurados del CV usando Claude Haiku via OpenRouter.
+    Campos extraidos: resumen, contacto, habilidades, stack_tecnico,
+    experiencia, proyectos, educacion, certificaciones, idiomas.
+    NUNCA inventa datos — solo extrae lo que aparece literalmente en el CV.
     """
     perfil_id = perfil.get("id", "?")
     print(f"[cv-extractor] Iniciando extraccion para perfil {perfil_id}")
@@ -132,7 +165,7 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
         except: datos_json = {}
 
     # 2. Si no hay cv_markdown suficiente, intentar descargar el PDF
-    pdf_url = datos_json.get("cv_pdf_url", "")
+    pdf_url = (datos_json.get("cv_pdf_url") or "").strip()
     if pdf_url and len(cv_texto) < 500:
         try:
             req = urllib.request.Request(pdf_url, headers={"User-Agent": "Career-Ops/2.0"})
@@ -153,11 +186,10 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
         update_perfil(perfil_id, {"cv_extraction_pending": False})
         return {}
 
-    # 3. Llamar a Claude Haiku para extraccion estructurada completa
-    prompt = CV_EXTRACTION_PROMPT.replace("{cv_texto}", cv_texto[:7000])
+    # 3. Llamar al LLM para extraccion estructurada (temperature=0.0)
+    prompt   = CV_EXTRACTION_PROMPT.replace("{cv_texto}", cv_texto[:7500])
     raw_json = ""
-    # Intentar primero con Claude Haiku, fallback a Gemini Flash
-    for model in ["anthropic/claude-3-haiku", "google/gemini-2.0-flash-001"]:
+    for model in ["anthropic/claude-3-haiku", "google/gemini-2.0-flash-001", "openai/gpt-4o-mini"]:
         try:
             raw_json = _call_openrouter(prompt, model=model)
             print(f"[cv-extractor] LLM ({model}) respondio: {len(raw_json)} chars")
@@ -170,37 +202,92 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
         update_perfil(perfil_id, {"cv_extraction_pending": False})
         return {}
 
-    # 4. Parsear el JSON de la respuesta (limpiar markdown si el LLM lo inyecto)
+    # 4. Parsear JSON (limpiar markdown si el LLM lo inyecto)
     clean = raw_json.strip()
     if clean.startswith("```"):
         clean = re.sub(r"^```[a-z]*\n?", "", clean)
         clean = re.sub(r"```$", "", clean).strip()
+    # Buscar primer { en caso de texto previo
+    start = clean.find("{")
+    if start > 0:
+        clean = clean[start:]
     try:
         extracted = json.loads(clean)
     except Exception as e:
-        print(f"[cv-extractor] No se pudo parsear JSON: {e}\nRespuesta: {clean[:300]}")
+        print(f"[cv-extractor] No se pudo parsear JSON: {e}\nRespuesta: {clean[:400]}")
         update_perfil(perfil_id, {"cv_extraction_pending": False})
         return {}
 
-    # 5. Construir datos_json preservando foto y pdf ya subidos
-    nuevo_datos = {
-        "foto_url":        datos_json.get("foto_url", ""),
-        "cv_pdf_url":      datos_json.get("cv_pdf_url", ""),
-        "telefono":        datos_json.get("telefono", ""),
-        "resumen":         extracted.get("resumen", ""),
-        "habilidades":     extracted.get("habilidades", []),
-        "experiencia":     extracted.get("experiencia", []),
-        "educacion":       extracted.get("educacion", []),
-        "certificaciones": extracted.get("certificaciones", []),
-        "idiomas":         extracted.get("idiomas", []),
+    # 5. Extraer subfields de contacto de forma segura
+    contacto_raw = extracted.get("contacto") or {}
+    if not isinstance(contacto_raw, dict):
+        contacto_raw = {}
+
+    def _str(v): return str(v).strip() if v else ""
+    def _lst(v): return v if isinstance(v, list) else []
+    def _dct(v): return v if isinstance(v, dict) else {}
+
+    contacto = {
+        "telefono": _str(contacto_raw.get("telefono")),
+        "ciudad":   _str(contacto_raw.get("ciudad")),
+        "pais":     _str(contacto_raw.get("pais")),
+        "linkedin": _str(contacto_raw.get("linkedin")),
+        "github":   _str(contacto_raw.get("github")),
+        "web":      _str(contacto_raw.get("web")),
     }
 
-    # 6. Guardar en Supabase y resetear flag
-    update_perfil(perfil_id, {
+    stack_raw = extracted.get("stack_tecnico") or {}
+    if not isinstance(stack_raw, dict):
+        stack_raw = {}
+    stack_tecnico = {
+        "backend":  _lst(stack_raw.get("backend")),
+        "frontend": _lst(stack_raw.get("frontend")),
+        "datos":    _lst(stack_raw.get("datos")),
+        "infra":    _lst(stack_raw.get("infra")),
+        "ia_llm":   _lst(stack_raw.get("ia_llm")),
+        "otros":    _lst(stack_raw.get("otros")),
+    }
+
+    # 6. Construir datos_json preservando foto y pdf ya subidos
+    nuevo_datos = {
+        # Preservar archivos ya subidos
+        "foto_url":     _str(datos_json.get("foto_url")),
+        "cv_pdf_url":   _str(datos_json.get("cv_pdf_url")),
+        # Nuevos campos extraidos
+        "contacto":     contacto,
+        "resumen":      _str(extracted.get("resumen")),
+        "habilidades":  _lst(extracted.get("habilidades")),
+        "stack_tecnico":stack_tecnico,
+        "proyectos":    _lst(extracted.get("proyectos")),
+        "experiencia":  _lst(extracted.get("experiencia")),
+        "educacion":    _lst(extracted.get("educacion")),
+        "certificaciones": _lst(extracted.get("certificaciones")),
+        "idiomas":      _lst(extracted.get("idiomas")),
+    }
+
+    # 7. Propagar campos de contacto a campos raiz de perfil_base
+    # para que el dashboard los muestre sin tener que leer datos_json
+    actualizacion_perfil = {
         "datos_json":            nuevo_datos,
         "cv_extraction_pending": False,
-    })
-    print(f"[cv-extractor] Extraccion completada: {len(nuevo_datos['experiencia'])} exp, {len(nuevo_datos['habilidades'])} skills")
+    }
+    # Solo actualizar si el valor fue extraido (no sobreescribir con vacio)
+    if contacto["telefono"]:
+        actualizacion_perfil["telefono"] = contacto["telefono"]
+    if contacto["linkedin"]:
+        actualizacion_perfil["linkedin"] = contacto["linkedin"]
+    if contacto["github"]:
+        actualizacion_perfil["github_url"] = contacto["github"]
+    if contacto["ciudad"]:
+        actualizacion_perfil["ciudad"] = contacto["ciudad"]
+
+    update_perfil(perfil_id, actualizacion_perfil)
+    print(
+        f"[cv-extractor] OK: {len(nuevo_datos['experiencia'])} exp, "
+        f"{len(nuevo_datos['habilidades'])} skills, "
+        f"{len(nuevo_datos['proyectos'])} proyectos, "
+        f"contacto={'SI' if any(contacto.values()) else 'NO'}"
+    )
     return nuevo_datos
 
 
