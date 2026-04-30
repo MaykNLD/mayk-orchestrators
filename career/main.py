@@ -171,13 +171,21 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
             req = urllib.request.Request(pdf_url, headers={"User-Agent": "Career-Ops/2.0"})
             with urllib.request.urlopen(req, timeout=30) as r:
                 pdf_bytes = r.read()
+            print(f"[cv-extractor] PDF descargado: {len(pdf_bytes)} bytes")
             try:
                 from io import BytesIO
                 from pdfminer.high_level import extract_text as pdf_extract
-                cv_texto = pdf_extract(BytesIO(pdf_bytes))[:8000]
-                print(f"[cv-extractor] PDF descargado: {len(cv_texto)} chars")
+                from pdfminer.layout import LAParams
+                # boxes_flow=None: lee top→bottom estrictamente, sin agrupar columnas.
+                # Critico para PDFs de dos columnas — evita mezclar sidebar con experiencia.
+                laparams = LAParams(boxes_flow=None)
+                cv_texto = pdf_extract(BytesIO(pdf_bytes), laparams=laparams)[:12000]
+                print(f"[cv-extractor] Texto extraido: {len(cv_texto)} chars")
+                print(f"[cv-extractor] Preview texto (500c): {cv_texto[:500]!r}")
             except ImportError:
                 print("[cv-extractor] pdfminer no disponible")
+            except Exception as e_pdf:
+                print(f"[cv-extractor] Error leyendo PDF con pdfminer: {e_pdf}")
         except Exception as e:
             print(f"[cv-extractor] No se pudo descargar el PDF: {e}")
 
@@ -187,7 +195,7 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
         return {}
 
     # 3. Llamar al LLM para extraccion estructurada (temperature=0.0)
-    prompt   = CV_EXTRACTION_PROMPT.replace("{cv_texto}", cv_texto[:7500])
+    prompt   = CV_EXTRACTION_PROMPT.replace("{cv_texto}", cv_texto[:10000])
     raw_json = ""
     for model in ["anthropic/claude-3-haiku", "google/gemini-2.0-flash-001", "openai/gpt-4o-mini"]:
         try:
