@@ -265,29 +265,32 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
         "idiomas":      _lst(extracted.get("idiomas")),
     }
 
-    # 7. Propagar campos de contacto a campos raiz de perfil_base
-    # para que el dashboard los muestre sin tener que leer datos_json
-    actualizacion_perfil = {
+    # 7a. SIEMPRE guardar datos_json y resetear el flag — esto nunca puede fallar
+    # por columnas inexistentes porque son campos core del schema
+    update_perfil(perfil_id, {
         "datos_json":            nuevo_datos,
         "cv_extraction_pending": False,
-    }
-    # Solo actualizar si el valor fue extraido (no sobreescribir con vacio)
-    if contacto["telefono"]:
-        actualizacion_perfil["telefono"] = contacto["telefono"]
-    if contacto["linkedin"]:
-        actualizacion_perfil["linkedin"] = contacto["linkedin"]
-    if contacto["github"]:
-        actualizacion_perfil["github_url"] = contacto["github"]
-    if contacto["ciudad"]:
-        actualizacion_perfil["ciudad"] = contacto["ciudad"]
-
-    update_perfil(perfil_id, actualizacion_perfil)
+    })
     print(
         f"[cv-extractor] OK: {len(nuevo_datos['experiencia'])} exp, "
         f"{len(nuevo_datos['habilidades'])} skills, "
         f"{len(nuevo_datos['proyectos'])} proyectos, "
         f"contacto={'SI' if any(contacto.values()) else 'NO'}"
     )
+
+    # 7b. Best-effort: propagar contacto a campos raiz de perfil_base
+    # Si alguna columna no existe en el schema, no bloquea la extraccion
+    try:
+        contact_update = {}
+        if contacto["telefono"]:  contact_update["telefono"]   = contacto["telefono"]
+        if contacto["linkedin"]:  contact_update["linkedin"]   = contacto["linkedin"]
+        if contacto["github"]:    contact_update["github_url"] = contacto["github"]
+        if contact_update:
+            update_perfil(perfil_id, contact_update)
+            print(f"[cv-extractor] Contacto raiz propagado: {list(contact_update.keys())}")
+    except Exception as e:
+        print(f"[cv-extractor] No se pudo propagar contacto raiz (no critico): {e}")
+
     return nuevo_datos
 
 
