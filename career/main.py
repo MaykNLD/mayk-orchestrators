@@ -537,6 +537,8 @@ body{{font-family:-apple-system,'Segoe UI',sans-serif;width:210mm;min-height:297
 </body></html>"""
 
 
+def worker_polling_loop():
+    """Loop principal del worker. Procesa candidaturas, extracciones de CV y descargas."""
     print("[orchestrator-worker] Inicializando Worker Polling Loop...")
     heartbeat_counter = 0
     while True:
