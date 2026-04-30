@@ -10,6 +10,14 @@ Flujos disponibles:
   GET  /health                  → Estado de todos los agentes
 """
 import os, json, sys, urllib.request, threading, re, time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+
+# Executor de nivel de modulo para llamadas LLM con timeout real.
+# NO usar 'with ThreadPoolExecutor() as ex:' porque su __exit__ llama
+# shutdown(wait=True), lo que bloquea si el thread urllib no termina.
+# Con un executor persistente, future.result(timeout=N) lanza TimeoutError
+# y el caller avanza aunque el thread interno siga bloqueado en la red.
+_LLM_EXECUTOR = ThreadPoolExecutor(max_workers=6, thread_name_prefix="llm_call")
 from pathlib import Path
 from html.parser import HTMLParser
 from fastapi import UploadFile, File,  FastAPI, HTTPException
@@ -123,7 +131,13 @@ CV A EXTRAER:
 """
 
 def _call_openrouter(prompt: str, model: str = "anthropic/claude-3-haiku") -> str:
-    """Llama directamente a OpenRouter. Timeout DURO de 55s via ThreadPoolExecutor."""
+    """Llama a OpenRouter con timeout REAL de 55s.
+
+    Usa _LLM_EXECUTOR (modulo-level ThreadPoolExecutor) para que al hacer
+    timeout, el llamador avance SIN BLOQUEAR esperando al thread urllib.
+    Con 'with ThreadPoolExecutor() as ex', __exit__ llama shutdown(wait=True)
+    que bloquea hasta que urllib termina — potencialmente para siempre.
+    """
     if not OPENROUTER_API_KEY:
         raise ValueError("OPENROUTER_API_KEY no configurada")
 
@@ -131,7 +145,7 @@ def _call_openrouter(prompt: str, model: str = "anthropic/claude-3-haiku") -> st
         data = json.dumps({
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 2500,   # Reducido: respuesta mas rapida, menos riesgo de timeout
+            "max_tokens": 2500,
             "temperature": 0.0,
         }).encode()
         req = urllib.request.Request(
@@ -149,16 +163,13 @@ def _call_openrouter(prompt: str, model: str = "anthropic/claude-3-haiku") -> st
             resp = json.loads(r.read().decode())
         return resp["choices"][0]["message"]["content"]
 
-    # Timeout DURO: si el hilo no termina en 55s, se lanza TimeoutError
-    # Esto cubre el caso en que urllib no dispara su propio timeout
-    # (cuando el servidor responde headers rapido pero el body llega en chunks lentos)
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-    with ThreadPoolExecutor(max_workers=1) as ex:
-        future = ex.submit(_do_request)
-        try:
-            return future.result(timeout=55)
-        except FuturesTimeout:
-            raise TimeoutError(f"LLM [{model}]: timeout duro de 55s superado")
+    future = _LLM_EXECUTOR.submit(_do_request)
+    try:
+        return future.result(timeout=55)   # TimeoutError si excede 55s
+    except _FuturesTimeout:
+        # NO llamamos executor.shutdown() — el thread sigue en background
+        # pero el llamador avanza inmediatamente al siguiente modelo.
+        raise TimeoutError(f"LLM [{model}]: timeout real de 55s superado")
 
 def _extract_cv_from_pdf(perfil: dict) -> dict:
     """
