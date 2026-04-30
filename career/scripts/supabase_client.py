@@ -386,6 +386,35 @@ def update_cv_download_request(request_id: str, data: dict) -> dict:
     data["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
     return _patch("cv_download_requests", "id", request_id, data)
 
+def cleanup_old_cv_download_requests(older_than_days: int = 7) -> int:
+    """Borra cv_download_requests con status done/error mas antiguos de N dias.
+    Evita que la tabla acumule datos base64 pesados sin utilidad.
+    Devuelve el numero de registros borrados (0 si no hay o si falla).
+    """
+    import datetime
+    cutoff = (
+        datetime.datetime.utcnow() - datetime.timedelta(days=older_than_days)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Supabase REST: DELETE con filtros compuestos en query string
+    url = (
+        f"{SUPABASE_URL}/rest/v1/cv_download_requests"
+        f"?status=in.(done,error)&created_at=lt.{cutoff}"
+    )
+    req = urllib.request.Request(
+        url, method="DELETE",
+        headers={**_headers(), "Prefer": "return=representation"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            deleted = json.loads(r.read().decode())
+            count = len(deleted) if isinstance(deleted, list) else 0
+            if count:
+                print(f"[supabase] 🧹 Limpieza TTL: {count} cv_download_requests borrados (>7 dias)")
+            return count
+    except Exception as e:
+        print(f"[supabase] Advertencia: cleanup_old_cv_download_requests fallo: {e}")
+        return 0
+
 
 def log_error(context: str, error: str, app_id: Optional[str] = None, extra: Optional[dict] = None) -> dict:
     """Persiste un error critico del pipeline en Supabase (tabla career_errores)

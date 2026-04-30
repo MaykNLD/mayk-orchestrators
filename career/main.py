@@ -733,6 +733,14 @@ def worker_polling_loop():
 
         except Exception as e:
             print(f"[orchestrator-worker] Error en el loop principal: {e}")
+
+        # ── Limpieza TTL: borrar cv_download_requests done/error >7 dias ──
+        try:
+            from scripts.supabase_client import cleanup_old_cv_download_requests
+            cleanup_old_cv_download_requests(older_than_days=7)
+        except Exception:
+            pass  # Nunca romper el loop por un fallo de limpieza
+
         time.sleep(5)
 
 
