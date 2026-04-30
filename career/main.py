@@ -390,6 +390,8 @@ def _build_cv_html(perfil: dict, datos_json: dict,
     # Foto
     foto_size_key = (datos_json.get("foto_size") or "m").lower()
     foto_px = {"s": 70, "m": 100, "l": 130, "xl": 160}.get(foto_size_key, 100)
+    foto_align = esc(datos_json.get("foto_align") or "center")
+    
     foto_tag = ""
     if foto_modo == "con_foto" and foto_url_val:
         foto_tag = f'<img class="foto" src="{esc(foto_url_val)}" alt="Foto">'
@@ -510,7 +512,7 @@ def _build_cv_html(perfil: dict, datos_json: dict,
 @page{{size:A4;margin:0}}
 body{{font-family:-apple-system,'Segoe UI',sans-serif;width:210mm;min-height:297mm;background:#fff;color:#1f2937;font-size:9.5pt;line-height:1.5}}
 .header{{background:#1a1a2e;color:#fff;padding:26px 34px;display:flex;align-items:center;gap:18px}}
-.foto{{width:{foto_px}px;height:{foto_px}px;border-radius:50%;object-fit:cover;border:3px solid #7c6dfa;flex-shrink:0}}
+.foto{{width:{foto_px}px;height:{foto_px}px;border-radius:50%;object-fit:cover;object-position:{foto_align};border:3px solid #7c6dfa;flex-shrink:0}}
 .header-info{{flex:1}}
 .nombre{{font-size:21pt;font-weight:700;letter-spacing:.3px}}
 .subtitulo{{font-size:8.5pt;color:#a5b4fc;margin-top:3px}}
