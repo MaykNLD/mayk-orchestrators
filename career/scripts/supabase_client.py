@@ -175,7 +175,7 @@ def get_todays_processed_count(perfil_id: str) -> int:
 def update_heartbeat() -> None:
     """Actualiza el heartbeat del backend en Supabase para que el dashboard sepa que está vivo."""
     import datetime
-    url = f"{SUPABASE_URL}/rest/v1/backend_status"
+    url = f"{SUPABASE_URL}/rest/v1/backend_status?on_conflict=id"
     h = _headers()
     h["Prefer"] = "resolution=merge-duplicates,return=minimal"
     data = json.dumps({
