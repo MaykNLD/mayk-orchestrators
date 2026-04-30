@@ -123,29 +123,42 @@ CV A EXTRAER:
 """
 
 def _call_openrouter(prompt: str, model: str = "anthropic/claude-3-haiku") -> str:
-    """Llama directamente a OpenRouter con el modelo indicado. Devuelve el texto de la respuesta."""
+    """Llama directamente a OpenRouter. Timeout DURO de 55s via ThreadPoolExecutor."""
     if not OPENROUTER_API_KEY:
         raise ValueError("OPENROUTER_API_KEY no configurada")
-    data = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 4000,
-        "temperature": 0.0,  # Maxima literalidad, minima creatividad
-    }).encode()
-    req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://career-ops.vercel.app",
-            "X-Title": "Career-Ops",
-        },
-        method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=90) as r:
-        resp = json.loads(r.read().decode())
-    return resp["choices"][0]["message"]["content"]
+
+    def _do_request() -> str:
+        data = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 2500,   # Reducido: respuesta mas rapida, menos riesgo de timeout
+            "temperature": 0.0,
+        }).encode()
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://career-ops.vercel.app",
+                "X-Title": "Career-Ops",
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=50) as r:
+            resp = json.loads(r.read().decode())
+        return resp["choices"][0]["message"]["content"]
+
+    # Timeout DURO: si el hilo no termina en 55s, se lanza TimeoutError
+    # Esto cubre el caso en que urllib no dispara su propio timeout
+    # (cuando el servidor responde headers rapido pero el body llega en chunks lentos)
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        future = ex.submit(_do_request)
+        try:
+            return future.result(timeout=55)
+        except FuturesTimeout:
+            raise TimeoutError(f"LLM [{model}]: timeout duro de 55s superado")
 
 def _extract_cv_from_pdf(perfil: dict) -> dict:
     """
@@ -195,10 +208,12 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
         return {}
 
     # 3. Llamar al LLM para extraccion estructurada (temperature=0.0)
+    # Timeout duro por modelo: 55s. Max 3 modelos = max 165s total.
     prompt   = CV_EXTRACTION_PROMPT.replace("{cv_texto}", cv_texto[:10000])
     raw_json = ""
     for model in ["anthropic/claude-3-haiku", "google/gemini-2.0-flash-001", "openai/gpt-4o-mini"]:
         try:
+            print(f"[cv-extractor] Llamando LLM: {model}...")
             raw_json = _call_openrouter(prompt, model=model)
             print(f"[cv-extractor] LLM ({model}) respondio: {len(raw_json)} chars")
             break

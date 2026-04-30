@@ -151,12 +151,23 @@ jobs:
           tailscale ip -4
           echo "========================================================="
 
-      # ── 9. Mantener servidor vivo ──
+      # ── 9. Mantener servidor vivo (con captura de logs cada 60s) ──
       - name: ⏳ Mantener vivo
+        working-directory: ./mayk-orchestrators
         run: |
           HOURS=${{ github.event.inputs.duration }}
+          TOTAL_SECS=$((HOURS * 3600))
+          ELAPSED=0
           echo "Servidor activo. Se apagará en ${HOURS}h."
-          sleep $((HOURS * 3600))
+          echo "Logs del career-orchestrator aparecerán cada 60s."
+          while [ $ELAPSED -lt $TOTAL_SECS ]; do
+            sleep 60
+            ELAPSED=$((ELAPSED + 60))
+            echo ""
+            echo "=== [career-orchestrator logs — ${ELAPSED}s elapsed] ==="
+            docker compose -f docker-compose.career.yml logs --tail=30 career-orchestrator 2>/dev/null || true
+            echo "======================================================"
+          done
 
       # ── 10. Cleanup: eliminar URL de Supabase al apagar ──
       - name: 🧹 Limpiar backend_status en Supabase
