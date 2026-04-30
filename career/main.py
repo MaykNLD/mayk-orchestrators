@@ -294,7 +294,215 @@ def _extract_cv_from_pdf(perfil: dict) -> dict:
     return nuevo_datos
 
 
-def worker_polling_loop():
+# ──────────────────────────────────────────────────────────────────────────
+# Generador HTML de CV sin LLM — 100% fiel a datos_json, sin alucinaciones
+# TODO: cuando haya mejor IA disponible, reactivar agente-hr-diseno en el
+#       worker (buscar "FUTURO: reactivar agente-hr-diseno") y eliminar esta
+#       funcion.
+# ──────────────────────────────────────────────────────────────────────────
+def _build_cv_html(perfil: dict, datos_json: dict,
+                   foto_modo: str, foto_url_val: str | None, idioma: str) -> str:
+    """Genera HTML premium del CV DIRECTAMENTE desde datos_json. Sin LLM."""
+    import html as _h
+
+    def esc(v):   return _h.escape(str(v).strip()) if v else ""
+    def lst(v):   return v if isinstance(v, list) else []
+    def dct(v):   return v if isinstance(v, dict) else {}
+
+    nombre   = f"{esc(perfil.get('nombre') or '')} {esc(perfil.get('apellido') or '')}".strip()
+    email    = esc(perfil.get("email") or "")
+    c        = dct(datos_json.get("contacto"))
+    telefono = esc(perfil.get("telefono") or c.get("telefono") or "")
+    ciudad   = esc(c.get("ciudad") or "")
+    pais     = esc(c.get("pais") or "")
+    linkedin = esc(perfil.get("linkedin") or c.get("linkedin") or "")
+    github   = esc(perfil.get("github_url") or c.get("github") or "")
+    web      = esc(c.get("web") or "")
+    ubicacion= ", ".join(filter(None, [ciudad, pais]))
+
+    resumen       = esc(datos_json.get("resumen") or "")
+    habilidades   = lst(datos_json.get("habilidades"))
+    experiencia   = lst(datos_json.get("experiencia"))
+    proyectos     = lst(datos_json.get("proyectos"))
+    educacion     = lst(datos_json.get("educacion"))
+    certificaciones = lst(datos_json.get("certificaciones"))
+    idiomas_lst   = lst(datos_json.get("idiomas"))
+    stack         = dct(datos_json.get("stack_tecnico"))
+
+    # Subtítulo: primeras techs del stack o habilidades
+    all_techs = []
+    for cat in ["backend","frontend","datos","infra","ia_llm"]:
+        all_techs.extend(lst(stack.get(cat)))
+    if not all_techs:
+        all_techs = habilidades
+    subtitulo = " · ".join(esc(t) for t in all_techs[:6])
+
+    # Foto
+    foto_tag = ""
+    if foto_modo == "con_foto" and foto_url_val:
+        foto_tag = f'<img class="foto" src="{esc(foto_url_val)}" alt="Foto">'
+
+    # Contacto
+    def ci(icon, text, href=None):
+        if not text: return ""
+        inner = f'<a href="{href}" target="_blank" style="color:#c7d2fe;text-decoration:none;">{icon} {text}</a>' if href else f'{icon} {text}'
+        return f'<span class="ci">{inner}</span>'
+
+    contacto_row = "".join([
+        ci("✉", email),
+        ci("📱", telefono),
+        ci("📍", ubicacion),
+        ci("🔗", "LinkedIn", linkedin) if linkedin else "",
+        ci("⚡", "GitHub",   github)   if github   else "",
+        ci("🌐", web, web)             if web      else "",
+    ])
+
+    # Sección helper
+    def seccion(titulo, contenido, sidebar=False):
+        if not contenido.strip(): return ""
+        return f'<div class="sec"><div class="sec-title">{titulo}</div>{contenido}</div>'
+
+    # Experiencia
+    exp_items = ""
+    for e in experiencia:
+        fi = esc(e.get("fecha_inicio") or "")
+        ff = esc(e.get("fecha_fin")    or "")
+        fechas = f"{fi} – {ff}" if (fi or ff) else ""
+        desc   = esc(e.get("descripcion") or "")
+        exp_items += f"""
+        <div class="exp-item">
+          <div class="row-sb">
+            <span class="exp-puesto">{esc(e.get('puesto') or '')}</span>
+            <span class="muted-sm">{fechas}</span>
+          </div>
+          <div class="exp-empresa">{esc(e.get('empresa') or '')}</div>
+          {"<p class='exp-desc'>" + desc + "</p>" if desc else ""}
+        </div>"""
+
+    # Proyectos
+    proy_items = ""
+    for p in proyectos:
+        nombre_p = esc(p.get("nombre") or "")
+        url_p    = p.get("url") or ""
+        fecha_p  = esc(p.get("fecha") or "")
+        desc_p   = esc(p.get("descripcion") or "")
+        techs_p  = lst(p.get("tecnologias"))
+        link     = f'<a href="{esc(url_p)}" target="_blank" style="color:#111827;text-decoration:none;">{nombre_p}</a>' if url_p else nombre_p
+        pills    = "".join(f'<span class="tp">{esc(t)}</span>' for t in techs_p)
+        proy_items += f"""
+        <div class="proy-item">
+          <div class="row-sb">
+            <span class="exp-puesto">{link}</span>
+            {"<span class='muted-sm'>" + fecha_p + "</span>" if fecha_p else ""}
+          </div>
+          {"<p class='exp-desc'>" + desc_p + "</p>" if desc_p else ""}
+          {"<div class='pills-row'>" + pills + "</div>" if pills else ""}
+        </div>"""
+
+    # Stack
+    stack_html = ""
+    labels = {"backend":"Backend","frontend":"Frontend","datos":"Datos & BD",
+              "infra":"Infra & Ops","ia_llm":"IA / LLMs","otros":"Otros"}
+    for cat, lbl in labels.items():
+        items = lst(stack.get(cat))
+        if items:
+            ps = "".join(f'<span class="sp">{esc(i)}</span>' for i in items)
+            stack_html += f'<div class="stack-cat"><div class="stack-lbl">{lbl}</div><div>{ps}</div></div>'
+
+    # Habilidades
+    skills_html = "".join(f'<span class="skp">{esc(h)}</span>' for h in habilidades)
+
+    # Idiomas
+    lang_html = ""
+    for lg in idiomas_lst:
+        lang_html += f'<div class="lang-row"><span class="lang-n">{esc(lg.get("idioma") or "")}</span><span class="muted-sm">{esc(lg.get("nivel") or "")}</span></div>'
+
+    # Educación
+    edu_html = ""
+    for ed in educacion:
+        edu_html += f'<div class="edu-item"><div class="edu-titulo">{esc(ed.get("titulo") or "")}</div><div class="muted-sm">{esc(ed.get("institucion") or "")} {("· " + esc(ed.get("fecha") or "")) if ed.get("fecha") else ""}</div></div>'
+
+    # Certificaciones
+    cert_html = ""
+    for cert in certificaciones:
+        cert_html += f'<div class="edu-item"><div class="edu-titulo">{esc(cert.get("nombre") or "")}</div><div class="muted-sm">{esc(cert.get("emisor") or "")} {("· " + esc(cert.get("fecha") or "")) if cert.get("fecha") else ""}</div></div>'
+
+    # Columna principal
+    main_html = ""
+    if resumen:
+        main_html += seccion("Perfil Profesional", f'<p class="resumen">{resumen}</p>')
+    if exp_items:
+        main_html += seccion("Experiencia", exp_items)
+    if proy_items:
+        main_html += seccion("Proyectos", proy_items)
+
+    # Sidebar
+    side_html = ""
+    if stack_html:
+        side_html += seccion("Stack Técnico", stack_html)
+    if skills_html:
+        side_html += seccion("Habilidades", f'<div class="pills-row">{skills_html}</div>')
+    if lang_html:
+        side_html += seccion("Idiomas", lang_html)
+    if edu_html:
+        side_html += seccion("Educación", edu_html)
+    if cert_html:
+        side_html += seccion("Certificaciones", cert_html)
+
+    return f"""<!DOCTYPE html>
+<html lang="{idioma.lower() if idioma else 'es'}">
+<head><meta charset="UTF-8">
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+@page{{size:A4;margin:0}}
+body{{font-family:-apple-system,'Segoe UI',sans-serif;width:210mm;min-height:297mm;background:#fff;color:#1f2937;font-size:9.5pt;line-height:1.5}}
+.header{{background:#1a1a2e;color:#fff;padding:26px 34px;display:flex;align-items:center;gap:18px}}
+.foto{{width:78px;height:78px;border-radius:50%;object-fit:cover;border:3px solid #7c6dfa;flex-shrink:0}}
+.header-info{{flex:1}}
+.nombre{{font-size:21pt;font-weight:700;letter-spacing:.3px}}
+.subtitulo{{font-size:8.5pt;color:#a5b4fc;margin-top:3px}}
+.contacto-row{{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:8pt;color:#c7d2fe}}
+.ci{{display:flex;align-items:center;gap:3px}}
+.body{{display:flex;min-height:calc(297mm - 130px)}}
+.main{{flex:1;padding:22px 28px;border-right:1px solid #e5e7eb}}
+.sidebar{{width:66mm;padding:22px 18px;background:#f9fafb}}
+.sec{{margin-bottom:18px}}
+.sec-title{{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#7c6dfa;border-bottom:1.5px solid #7c6dfa;padding-bottom:4px;margin-bottom:10px}}
+.exp-item{{margin-bottom:13px;padding-left:9px;border-left:2px solid #e5e7eb}}
+.proy-item{{margin-bottom:11px;padding-left:9px;border-left:2px solid #e5e7eb}}
+.row-sb{{display:flex;justify-content:space-between;align-items:baseline;gap:6px}}
+.exp-puesto{{font-weight:600;font-size:9.5pt;color:#111827}}
+.exp-empresa{{color:#7c6dfa;font-weight:500;font-size:8.5pt;margin:2px 0}}
+.exp-desc{{color:#4b5563;font-size:8pt;margin-top:3px;line-height:1.5}}
+.muted-sm{{font-size:7.5pt;color:#6b7280;white-space:nowrap}}
+.pills-row{{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}}
+.tp{{background:#ede9fe;color:#5b21b6;font-size:7pt;padding:1px 6px;border-radius:10px}}
+.skp{{background:#f3f0ff;color:#5b21b6;font-size:7.5pt;padding:2px 7px;border-radius:11px;border:1px solid #ddd6fe;margin:2px 2px 2px 0}}
+.stack-cat{{margin-bottom:9px}}
+.stack-lbl{{font-size:7pt;font-weight:700;text-transform:uppercase;color:#7c6dfa;margin-bottom:4px;letter-spacing:.7px}}
+.sp{{background:#e0f2fe;color:#0369a1;font-size:7pt;padding:2px 6px;border-radius:10px;border:1px solid #bae6fd;display:inline-block;margin:2px 2px 2px 0}}
+.lang-row{{display:flex;justify-content:space-between;margin-bottom:5px}}
+.lang-n{{font-weight:500;font-size:8.5pt}}
+.edu-item{{margin-bottom:9px}}
+.edu-titulo{{font-weight:600;font-size:8.5pt;color:#111827}}
+.resumen{{font-size:9pt;color:#374151;line-height:1.6}}
+</style></head>
+<body>
+<div class="header">
+  {foto_tag}
+  <div class="header-info">
+    <div class="nombre">{nombre}</div>
+    {"<div class='subtitulo'>" + subtitulo + "</div>" if subtitulo else ""}
+    <div class="contacto-row">{contacto_row}</div>
+  </div>
+</div>
+<div class="body">
+  <div class="main">{main_html}</div>
+  <div class="sidebar">{side_html}</div>
+</div>
+</body></html>"""
+
+
     print("[orchestrator-worker] Inicializando Worker Polling Loop...")
     heartbeat_counter = 0
     while True:
@@ -396,46 +604,12 @@ def worker_polling_loop():
                     else:
                         datos_dl = {}
 
-                    # ── Construir/recuperar cv_markdown ──
-                    # El agente-hr-diseno lee cv_markdown del perfil en Supabase.
-                    # Si es None o vacio (perfil importado via PDF), lo construimos
-                    # desde datos_json y lo persistimos para que el agente lo encuentre.
-                    cv_markdown = _s(perfil_dl.get("cv_markdown"))
-
-                    if not cv_markdown:
-                        if not datos_dl:
-                            raise ValueError(
-                                "El perfil no tiene cv_markdown ni datos_json. "
-                                "Importa tu CV en PDF primero desde 'Mi CV'."
-                            )
-                        nombre_dl = (
-                            _s(perfil_dl.get("nombre")) + " " +
-                            _s(perfil_dl.get("apellido"))
-                        ).strip()
-
-                        habilidades_str = ", ".join(
-                            str(h) for h in _l(datos_dl.get("habilidades")) if h
+                    # ── Validar que hay datos suficientes ──
+                    if not datos_dl:
+                        raise ValueError(
+                            "El perfil no tiene datos_json. "
+                            "Importa tu CV en PDF primero desde 'Mi CV'."
                         )
-
-                        def _json_safe(v):
-                            return json.dumps(_l(v), ensure_ascii=False, indent=2)
-
-                        cv_markdown = (
-                            f"Candidato: {nombre_dl}\n"
-                            f"Email: {_s(perfil_dl.get('email'))}\n"
-                            f"Telefono: {_s(datos_dl.get('telefono'))}\n"
-                            f"Resumen: {_s(datos_dl.get('resumen'))}\n"
-                            f"Habilidades: {habilidades_str}\n"
-                            f"Experiencia:\n{_json_safe(datos_dl.get('experiencia'))}\n"
-                            f"Educacion:\n{_json_safe(datos_dl.get('educacion'))}\n"
-                            f"Certificaciones:\n{_json_safe(datos_dl.get('certificaciones'))}\n"
-                            f"Idiomas:\n{_json_safe(datos_dl.get('idiomas'))}"
-                        )
-                        try:
-                            _upd_perfil(perfil_id, {"cv_markdown": cv_markdown})
-                            print(f"[orchestrator-worker] cv_markdown construido y persistido para {perfil_id}")
-                        except Exception as e_save:
-                            print(f"[orchestrator-worker] Advertencia: no se pudo persistir cv_markdown: {e_save}")
 
                     # ── Preparar foto ──
                     foto_modo = "con_foto" if con_foto else "sin_foto"
@@ -445,22 +619,18 @@ def worker_polling_loop():
                         foto_url  = None
                         print(f"[orchestrator-worker] con_foto=True pero foto_url vacia. Usando sin_foto.")
 
-                    # ── Paso 1: Agente genera el HTML ──
-                    print(f"[orchestrator-worker] Llamando agente-hr-diseno para HTML...")
-                    diseno_resp = call_agent(DISENO_URL, "/generar-cv-html", {
-                        "perfil_id": perfil_id,
-                        "foto_modo": foto_modo,
-                        "foto_url":  foto_url or None,
-                        "idioma":    idioma,
-                    }, timeout=180)
+                    # ── Paso 1: Generar HTML directamente desde datos_json (sin LLM) ──
+                    # FUTURO: reactivar agente-hr-diseno cuando haya IA de mejor calidad.
+                    # diseno_resp = call_agent(DISENO_URL, "/generar-cv-html", {
+                    #     "perfil_id": perfil_id,
+                    #     "foto_modo": foto_modo,
+                    #     "foto_url":  foto_url or None,
+                    #     "idioma":    idioma,
+                    # }, timeout=180)
+                    # html_cv = _s(diseno_resp.get("html_cv"))
+                    print(f"[orchestrator-worker] Generando HTML desde datos_json (sin LLM)...")
+                    html_cv = _build_cv_html(perfil_dl, datos_dl, foto_modo, foto_url, idioma)
 
-                    html_cv = _s(diseno_resp.get("html_cv"))
-                    if not html_cv:
-                        raise ValueError(
-                            "El agente de diseno devolvio html_cv vacio. "
-                            f"Respuesta: {str(diseno_resp)[:200]}"
-                        )
-                    print(f"[orchestrator-worker] HTML recibido OK ({len(html_cv)} chars)")
 
                     # ── Paso 2: Playwright convierte HTML → PDF ──
                     # Usamos 'load' en vez de 'networkidle' para evitar timeout
