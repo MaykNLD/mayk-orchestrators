@@ -1292,17 +1292,15 @@ Educacion: {json.dumps(dj.get('educacion',[]), ensure_ascii=False)}"""
     # Lanzar Sastre si score >= MIN_SCORE o si el usuario forzó Y la evaluación produjo algo real
     score_real = fit_score > 0.0 and grado != "F"
     if (fit_score >= MIN_SCORE or (req.forzar and score_real)):
-        t = threading.Thread(
-            target=run_sastre_background,
-            args=(app_id, perfil, raw_analysis, req.idioma, req.forzar),
-            daemon=True
-        )
-        t.start()
+        # Se ejecuta de forma secuencial (sin hilos) para evitar que el Action muera
+        # y deje la adaptación a medias.
+        run_sastre_background(app_id, perfil, raw_analysis, req.idioma, req.forzar)
+        
         if req.forzar and fit_score < MIN_SCORE:
-            result["mensaje"] = f"Score {fit_score}/5 ({grado}) — ENVIO FORZADO. CV de {empresa_r} — {rol_r} adaptándose en background."
+            result["mensaje"] = f"Score {fit_score}/5 ({grado}) — ENVIO FORZADO. CV de {empresa_r} — {rol_r} adaptado."
         else:
-            result["mensaje"] = f"Score {fit_score}/5 ({grado}). CV adaptándose en background. Notificación para {empresa_r} — {rol_r} por Telegram."
-        result["estado"]  = "en_proceso"
+            result["mensaje"] = f"Score {fit_score}/5 ({grado}). CV adaptado con éxito para {empresa_r} — {rol_r}."
+        result["estado"]  = "cv_generado"
     else:
         candidato_nombre = result["perfil"]
         print(f"[orchestrator] Oferta descartada para {candidato_nombre}: {empresa_r} — {rol_r}. Score {fit_score}/{MIN_SCORE}.")
