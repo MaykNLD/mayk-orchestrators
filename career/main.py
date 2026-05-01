@@ -591,7 +591,7 @@ def worker_polling_loop():
                         url_oferta=app_db.get("url", ""),
                         perfil_id=perfil_id,
                         app_id=app_id,
-                        forzar=True
+                        forzar=False
                     )
                     evaluar(req)
                     print(f"[orchestrator-worker] Candidatura completada: {app_id}")
