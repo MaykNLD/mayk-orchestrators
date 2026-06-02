@@ -949,12 +949,38 @@ def run_sastre_background(app_id: str, perfil: dict, raw_analysis: dict, idioma:
         if not cv_data.get("resumen"):
             cv_data["resumen"] = _s(datos_json.get("resumen", ""))
 
-        # El PDF se generará dinámicamente en el dashboard de Next.js
+        # El PDF se generará y guardará automáticamente en Supabase Storage
         update_application(app_id, {
             "tailored_content": cv_data,
             "keywords":         sastre_resp.get("keywords_insertadas", []),
             "status":           "cv_generado",
         })
+
+        # ── Llamar al dashboard para generar y guardar el PDF automáticamente ──
+        dashboard_url = os.environ.get("DASHBOARD_URL", "").rstrip("/")
+        internal_key  = os.environ.get("INTERNAL_API_KEY", "")
+        if dashboard_url and internal_key and app_id:
+            try:
+                pdf_payload = json.dumps({"app_id": app_id, "con_foto": False}).encode()
+                pdf_req = urllib.request.Request(
+                    f"{dashboard_url}/api/guardar-cv-pdf",
+                    data=pdf_payload,
+                    headers={
+                        "Content-Type":   "application/json",
+                        "x-internal-key": internal_key,
+                    },
+                    method="POST"
+                )
+                with urllib.request.urlopen(pdf_req, timeout=60) as resp:
+                    pdf_resp = json.loads(resp.read().decode())
+                    pdf_url  = pdf_resp.get("pdf_url", "")
+                    if pdf_url:
+                        print(f"[orchestrator] PDF guardado automáticamente: {pdf_url}")
+                    else:
+                        print("[orchestrator] AVISO: el endpoint no devolvió pdf_url.")
+            except Exception as pdf_err:
+                # No es fatal: el usuario puede descargar desde el dashboard igualmente
+                print(f"[orchestrator] AVISO: no se pudo guardar el PDF automáticamente: {pdf_err}")
 
         nombre_candidato = f"{perfil.get('nombre','')} {perfil.get('apellido','')}".strip()
         empresa = get_application(app_id).get("company", "") if app_id else ""
